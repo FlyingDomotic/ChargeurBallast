@@ -57,5 +57,19 @@ Les réglages sont mémorisés dans l'EEPROM de l'Arduino afin d'être disponibl
 	- affiche en % la différence entre la durée écoulée entre A et D et celle de R
 	- répond aux commandes sur le port série
 
+# Liste des commandes supportées
+    - A1-10: numéro ILS activation
+    - D1-10: numéro ILS désactivation
+    - R1-99: durée remplissage (0,1 s)
+    - T1-99: durée impulsion relais (0,01 s)
+    - O: ouvre trémie
+    - F: ferme trémie
+    - E: état ILS
+    - M: bascule l'état marche/arrêt
+    - P: bascule l'état debug
+    - init: (ré)initialise tout
+    - ?: cette aide
+
+
 Auteur : Flying Domotic, Février 2025, pour le FabLab
 Licence: GNU GENERAL PUBLIC LICENSE - Version 3, 29 June 2007

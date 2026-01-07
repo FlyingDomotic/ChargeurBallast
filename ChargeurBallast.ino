@@ -1,3 +1,5 @@
+#define CODE_VERSION "V26.1.7-1"
+
 /*
 
 Contrôle d'un chargeur de ballast pour train miniature
@@ -8,7 +10,7 @@ Contrôle d'un chargeur de ballast pour train miniature
 
 	Le premier relais ouvre la trémie alors que le second la ferme.
 
-	Un rail a été équipé de 10 ILS régulièrement espacés, afin de détecter l'aimant placé sous les wagons.
+	Un rail a été équipé de 10 ILS régulièrement espacés, afin de détecter l'aimant placé sous chaque wagon.
 
 	Lorsqu'un wagon passe au dessus de l'ILS d'ouverture (paramétrable), une impulsion (de durée réglable)
 		est envoyée au relais d'ouverture. La même chose est faite lorsque l'ILS de fermeture est
@@ -79,8 +81,9 @@ uint8_t activationIls;                                              // A: ILS nu
 uint8_t deactivationIls;                                            // D: ILS number to deactivate filling
 uint8_t fillingTime;                                                // R: time (0.1s) to fill wagon
 uint8_t pulseTime;                                                  // T: time (0.01s) to send current to relay
-bool isActive;                                                      // When active flag is true, relays are triggered by ILS
-bool inDebug;                                                       // Print debug message when true
+bool isActive = false;                                              // When active flag is true, relays are triggered by ILS
+bool inDebug = false;                                               // Print debug message when true
+bool displayIls = false;                                            // When set, continously ILS state
 
 #define FILLING_MULTIPLIER 100                                      // Multiplier to get fillingTime in ms
 #define PULSE_MULTIPLIER 10                                         // Multiplier to get pulseTime in ms
@@ -89,6 +92,7 @@ bool inDebug;                                                       // Print deb
 #define ILS_CLOSED LOW                                              // State read when ILS is closed
 #define RELAY_CLOSED LOW                                            // State to write to close relay
 #define RELAY_OPENED HIGH                                           // State to write to open relay
+#define DISPLAY_ILS_TIME 100                                        // Display ILS state every xxx ms
 
 uint8_t ilsPinMapping[] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11};         // Maps ILS number to Arduino PIN number
 uint8_t relayPinMapping[] = {12, 13};                               // Maps relay number to Arduino PIN number
@@ -99,10 +103,29 @@ unsigned long deactivationStartTime = 0;                            // Deactivat
 unsigned long fillingStartTime = 0;                                 // Filling start time (0 if none)
 unsigned long fillingEndTime = 0;                                   // Filling end time (0 if none)
 unsigned long relayPulseTime = 0;                                   // Relay plusing start time
+unsigned long lastIlsDisplay = 0;                                   // Last time we displayed ILS
 char inputBuffer[BUFFER_LENGHT];                                    // Serial input buffer
 uint8_t bufferLen = 0;                                              // Used chars in input buffer
 
 // Routines and functions
+
+void displayStatus(void);                                           // Display current status
+void loadSettings(void);                                            // Load settings from EEPROM
+void saveSettings(void);                                            // Save settings to EEPROM (only if modified)
+void initSettings(void);                                            // Init settings to default values
+void resetInputBuffer(void);                                        // Reset serial input buffer
+void initIO(void);                                                  // Init IO pins
+void workWithSerial(void);                                          // Work with Serial input
+void startFilling(void);                                            // Start filling
+void stopFilling(void);                                             // Stop filling
+void displayIlsState(void);                                         // Display all ILS state
+void printHelp(void);                                               // Print help message
+void toggleRun(void);                                               // Toggle run flag
+void toggleDebug(void);                                             // Toggle  debug flag
+void reinitAll(void);                                               // Reinitialize all settings
+void executeCommand(void);                                          // Execute command read on serial input (a-z and 0-9)
+void setup(void);                                                   // Setup
+void loop(void);                                                    // Main loop
 
 // Display current status
 void displayStatus(void) {
@@ -177,6 +200,11 @@ void initIO(void) {
 
 // Work with Serial input
 void workWithSerial(void) {
+    // Reset display ILS flag
+    if (displayIls) {
+        Serial.println(F(""));
+        displayIls = false;
+    }
     // Read serial input
     while (Serial.available()) {
         // Read one character
@@ -225,11 +253,7 @@ void stopFilling(void) {
 
 // Display all ILS state
 void displayIlsState(void) {
-    Serial.print (F("ILS 1-10: "));
-    for (uint8_t i = 0; i < 10; i++) {
-        Serial.print(digitalRead(ilsPinMapping[i]) == ILS_CLOSED ? "X" : "-");
-    }
-    Serial.println();
+    displayIls = true;
 }
 
 // Print help message
@@ -342,13 +366,15 @@ void executeCommand(void) {
 
 // Setup
 void setup(void){
+    initIO();
     Serial.begin(115200);
     Serial.println();
-    Serial.println(F("Chargeur ballast lancé..."));
+    Serial.print(F("Chargeur ballast "));
+    Serial.print(CODE_VERSION);
+    Serial.println(F(" lancé..."));
     resetInputBuffer();
     initSettings();
     loadSettings();
-    initIO();
     stopFilling();
     displayStatus();
 }
@@ -409,5 +435,22 @@ void loop(void){
     // Scan serial for input
     if (Serial.available()) {
         workWithSerial();
+    }
+
+    // Display ILS state if needed
+    if (displayIls) {
+        if ((millis() - lastIlsDisplay) > DISPLAY_ILS_TIME) {
+            Serial.print (F("\rILS : "));
+            for (uint8_t i = 0; i < 10; i++) {
+                if (digitalRead(ilsPinMapping[i]) == ILS_CLOSED) {
+                    Serial.print(i+1);
+                } else {
+                    Serial.print(F("-"));
+                }
+                Serial.print(F(" "));
+            }
+            Serial.print(F(" "));
+            lastIlsDisplay = millis();
+        }
     }
 }
