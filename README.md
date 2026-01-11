@@ -20,18 +20,19 @@ Les réglages sont mémorisés dans l'EEPROM de l'Arduino afin d'être disponibl
 	- 10 entrées ILS
 	- 2 sorties relais
 	- interface série pour paramétrage :
-		- définition numéro ILS activation trémie(A1 à A10)
-		- définition numéro ILS désactivation trémie (D1 à D10)
-		- définition durée impulsion en 1/1000eme de seconde (T1 à T999)
-		- définition durée remplissage en 1/1000eme de seconde (R1 à R9999)
-		- sauvegarde paramètres en EEPROM
-		- affichage état des ILS (E)
+		- définition numéro ILS activation trémie(IO1 à IO10)
+		- définition numéro ILS désactivation trémie (IF1 à IF10)
+		- définition durée impulsion relai en 1/1000eme de seconde (DIR1 à T999)
+		- définition durée remplissage wagon en 1/1000eme de seconde (DRW1 à R9999)
+		- affichage état des ILS (EI)
 		- affichage aide (?)
-		- commande d'ouverture de trémie (O)
-		- commande de fermeture (F)
+		- commande d'ouverture de trémie (OT)
+		- commande de fermeture (FT)
         - (ré)initialisation (INIT)
-        - fonction marche/arrêt (M)
-        - bascule debug (P)
+        - fonction marche (M)
+        - fonction arrêt (A)
+        - bascule déverminage (BD)
+		- sauvegarde automatique paramètres en EEPROM
 
 # Principe utilisé :
 	- le temps de remplissage d'un wagon est fixe, lié à la section de la trémie
@@ -58,16 +59,16 @@ Les réglages sont mémorisés dans l'EEPROM de l'Arduino afin d'être disponibl
 	- répond aux commandes sur le port série
 
 # Liste des commandes supportées
-    - A1-10: numéro ILS activation
-    - D1-10: numéro ILS désactivation
-    - R1-99: durée remplissage (0,1 s)
-    - T1-99: durée impulsion relais (0,01 s)
-    - O: ouvre trémie
-    - F: ferme trémie
-    - E: état ILS
-    - M: bascule l'état marche/arrêt
-    - P: bascule l'état debug
-    - init: (ré)initialise tout
+    - IO1-10 : ILS ouverture (numéro)
+    - IF1-10 : ILS fermeture numéro)
+    - DIR1-999 : Durée impulsion relai (ms)
+    - DRW1-9999 : Durée remplissage wagon (ms)
+    - M : Marche
+    - A : Arrêt
+    - EI : Etat ILS
+    - OT : Ouverture trémie
+    - FT : Fermeture trémie
+    - BD : Bascule déverminage
     - ?: cette aide
 
 

@@ -1,4 +1,4 @@
-#define CODE_VERSION "V26.1.11-1"
+#define CODE_VERSION "V26.1.12-1"
 
 /*
 
@@ -30,18 +30,18 @@ Hardware Arduino Nano:
 	- 10 entrées ILS
 	- 2 sorties relais
 	- interface série pour paramétrage :
-		- définition numéro ILS activation trémie(A1 à A10)
-		- définition numéro ILS désactivation trémie (D1 à D10)
-		- définition durée impulsion en 1/1000eme de seconde (T1 à T999)
-		- définition durée remplissage en 1/1000eme de seconde (R1 à R9999)
+		- définition numéro ILS activation trémie(IO1 à A10)
+		- définition numéro ILS désactivation trémie (IF1 à D10)
+		- définition durée impulsion en 1/1000eme de seconde (DRW1 à T999)
+		- définition durée remplissage en 1/1000eme de seconde (DIR1 à R9999)
         - sauvegarde paramètres en EEPROM
-		- affichage état des ILS (E)
+		- affichage état des ILS (EI)
 		- affichage aide (?)
-		- commande d'ouverture de trémie (O)
-		- commande de fermeture (F)
+		- commande d'ouverture de trémie (OT)
+		- commande de fermeture (FT)
         - (ré)initialisation (INIT)
         - fonction marche/arrêt (M)
-        - bascule debug (P)
+        - bascule debug (BD)
 
 Principe utilisé :
 	- le temps de remplissage d'un wagon est fixe, lié à la section de la trémie
@@ -51,20 +51,20 @@ Principe utilisé :
 
 Paramétrage :
     - on cherche la durée d'impulsion nécessaire pour ouvrir ou fermer la trémie à coup sur, sans faire chauffer les bobines,
-        en augmentant/réduisant la valeur du paramètre T et utilisant les commandes O et F pour ouvrir/fermer la trémie
-	- on mesure le temps de remplissage d'un wagon au chrono, avec avancée du wagon à la main (paramètre R, valeur 1 à 9999, en millisecondes)
-	- on repère le numéro de l'ILS début de remplissage  (paramètre A, valeur 1 à 10)
-	- on repère le numéro de l'ILS fin de remplissage  (paramètre D, valeur 1 à 10)
+        en augmentant/réduisant la valeur du paramètre DIR et utilisant les commandes OT et FT pour ouvrir/fermer la trémie
+	- on mesure le temps de remplissage d'un wagon au chrono, avec avancée du wagon à la main (paramètre DRW, valeur 1 à 9999, en millisecondes)
+	- on repère le numéro de l'ILS début de remplissage  (paramètre IO, valeur 1 à 10)
+	- on repère le numéro de l'ILS fin de remplissage  (paramètre IF, valeur 1 à 10)
 	- on ajuste la vitesse de la loco pour que le temps entre les 2 ILS soit celui de remplissage, aidé par le retour de l'Arduino
 		sur l'écart avec la vitesse idéale (ajouter le pourcentage donné par l'Arduino à la vitesse courante de la loco pour être parfait)
 
 Code :
 	- ferme la trémie au lancement
-	- déclenche l'ouverture sur la détection de l'ILS paramétré A, valeur 1 à 10
-	- déclenche la fermeture sur la détection de l'ILS paramétré D, valeur 1 à 10
-		ou l'expiration du temps de remplissage paramétré R, valeur 1 à 9999 en millisecondes
-	- la durée du déclenchement des bobines est fixée par le paramètre T, valeur 1 à 999 en millisecondes
-	- affiche en % la différence entre la durée écoulée entre A et D et celle de R
+	- déclenche l'ouverture sur la détection de l'ILS paramétré IO, valeur 1 à 10
+	- déclenche la fermeture sur la détection de l'ILS paramétré IF, valeur 1 à 10
+		ou l'expiration du temps de remplissage paramétré DRW, valeur 1 à 9999 en millisecondes
+	- la durée du déclenchement des bobines est fixée par le paramètre DIR, valeur 1 à 999 en millisecondes
+	- affiche en % la différence entre la durée écoulée entre IO et IF et celle de DRW
 	- répond aux commandes sur le port série
 
 Auteur : Flying Domotic, Février 2025, pour le FabLab
@@ -76,6 +76,20 @@ Licence: GNU GENERAL PUBLIC LICENSE - Version 3, 29 June 2007
 #include "Arduino.h"
 #include "EEPROM.h"
 
+// Command and text
+
+#define ILSOPEN_COMMAND "IO"
+#define ILSCLOSE_COMMAND "IF"
+#define RELAYPULSEDURATION_COMMAND "DIR"
+#define WAGONFILLDURATION_COMMAND "DRW"
+#define START_COMMAND "M"
+#define STOP_COMMAND "A"
+#define ILSSTATE_COMMAND "EI"
+#define OPENRELAY_COMMAND "OT"
+#define CLOSERELAY_COMMAND "FT"
+#define DEBUGTOGGLE_COMMAND "BD"
+#define INIT_COMMAND "INIT"
+
 //  Parameters
 
 #define MAGIC_NUMBER 59                                             // EEPROM magic byte
@@ -86,7 +100,7 @@ Licence: GNU GENERAL PUBLIC LICENSE - Version 3, 29 June 2007
 #define RELAY_OPENED HIGH                                           // State to write to open relay
 #define DISPLAY_ILS_TIME 100                                        // Display ILS state every xxx ms
 
-typedef struct eepromDataV1_t {
+struct eepromDataV1_s {
     uint8_t magicNumber;                                            // Magic number
     uint8_t version;                                                // Structure version
     uint8_t activationIls;                                          // A: ILS number to activate filling
@@ -110,8 +124,9 @@ unsigned long relayPulseTime = 0;                                   // Relay plu
 unsigned long lastIlsDisplay = 0;                                   // Last time we displayed ILS
 char inputBuffer[BUFFER_LENGHT];                                    // Serial input buffer
 uint8_t bufferLen = 0;                                              // Used chars in input buffer
+uint16_t commandValue;                                              // Value extracted from command
 
-eepromDataV1_t data;                                                // Data stored to/read from EEPROM
+eepromDataV1_s data;                                                // Data stored to/read from EEPROM
 
 // Routines and functions
 
@@ -122,11 +137,12 @@ void initSettings(void);                                            // Init sett
 void resetInputBuffer(void);                                        // Reset serial input buffer
 void initIO(void);                                                  // Init IO pins
 void workWithSerial(void);                                          // Work with Serial input
+bool isCommand(char* inputBuffer, char* commandToCheck);            // Check command without value
+bool isCommandValue(char* inputBuffer, char* commandToCheck, uint16_t minValue, uint16_t maxValue); // Check command with value
 void startFilling(void);                                            // Start filling
 void stopFilling(void);                                             // Stop filling
 void displayIlsState(void);                                         // Display all ILS state
 void printHelp(void);                                               // Print help message
-void toggleRun(void);                                               // Toggle run flag
 void toggleDebug(void);                                             // Toggle  debug flag
 void reinitAll(void);                                               // Reinitialize all settings
 void executeCommand(void);                                          // Execute command read on serial input (a-z and 0-9)
@@ -135,21 +151,21 @@ void loop(void);                                                    // Main loop
 
 // Display current status
 void displayStatus(void) {
-    Serial.print(F("A"));
+    Serial.print(F("IO"));
     Serial.print(data.activationIls);
-    Serial.print(F(" D"));
+    Serial.print(F(" IF"));
     Serial.print(data.deactivationIls);
-    Serial.print(F(" R"));
+    Serial.print(F(" DRW"));
     Serial.print(data.fillingTime);
-    Serial.print(F(" T"));
+    Serial.print(F(" DIR"));
     Serial.print(data.pulseTime);
-    if (data.inDebug) Serial.print(F(", debug"));
+    if (data.inDebug) Serial.print(F(", déverminage"));
     Serial.println(data.isActive ? F(", en marche") : F(", à l'arrêt"));
 }
 
 // Load settings from EEPROM
 void loadSettings(void) {
-    if (EEPROM.read(0) != MAGIC_NUMBER) {                           // Is first byte equal to magic cnumber?
+    if (EEPROM.read(0) != MAGIC_NUMBER) {                           // Is first byte equal to magic number?
         Serial.print(F("Magic est "));
         Serial.print(EEPROM.read(0));
         Serial.print(F(", pas "));
@@ -214,18 +230,14 @@ void workWithSerial(void) {
     while (Serial.available()) {
         // Read one character
         char c = Serial.read();
-        // Is this a return ?
+        // Is this a return?
         if (c == 13) {
             executeCommand();
             resetInputBuffer();
         } else if (c) {
             // Non null character
-            // Convert uppercases to lowercase
-            if (c >= 'A' && c <= 'Z') {
-                c += 32;
-            }
-            // Keep only "a" to "z" and "0" to "9"
-            if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
+            // Keep only "A" to "Z", "a" to "z" and "0" to "9"
+            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
                 if (bufferLen >= BUFFER_LENGHT - 1) {
                     Serial.println(F("Buffer plein - Reset!"));
                     resetInputBuffer();
@@ -234,6 +246,30 @@ void workWithSerial(void) {
             }
         }
     }
+}
+
+// Check command without value
+bool isCommand(char* inputBuffer, char* commandToCheck) {
+    return !strcasecmp(inputBuffer, commandToCheck);
+}
+
+// Check command with value
+bool isCommandValue(char* inputBuffer, char* commandToCheck, uint16_t minValue, uint16_t maxValue) {
+    if (strncmp(inputBuffer, commandToCheck, strlen(commandToCheck))) {
+        return false;
+    }
+    commandValue = atoi(&inputBuffer[strlen(commandToCheck)]);      // Convert given value
+    if (commandValue < minValue || commandValue > maxValue) {       // Check limits
+        Serial.print(commandValue);
+        Serial.print(F(" hors limites "));
+        Serial.print(minValue);
+        Serial.print(F("-"));
+        Serial.print(maxValue);
+        Serial.print(F(" pour la commande "));
+        Serial.println(commandToCheck);
+        return false;
+    }
+    return true;
 }
 
 // Start filling
@@ -263,23 +299,17 @@ void displayIlsState(void) {
 
 // Print help message
 void printHelp(void) {
-    Serial.println(F("A1-10: numéro ILS activation"));
-    Serial.println(F("D1-10: numéro ILS désactivation"));
-    Serial.println(F("R1-9999: durée remplissage (ms)"));
-    Serial.println(F("T1-999: durée impulsion relais (ms)"));
-    Serial.println(F("O: ouvre trémie"));
-    Serial.println(F("F: ferme trémie"));
-    Serial.println(F("E: état ILS"));
-    Serial.println(F("M: bascule l'état marche/arrêt"));
-    Serial.println(F("P: bascule l'état debug"));
-    Serial.println(F("init: (ré)initialise tout"));
-    Serial.println(F("?: cette aide"));
-}
-
-// Toggle run flag
-void toggleRun(void){
-    data.isActive = !data.isActive;
-    saveSettings();
+    Serial.print(F(ILSOPEN_COMMAND)); Serial.println(F("1-10 : ILS ouverture (numéro)"));
+    Serial.print(F(ILSCLOSE_COMMAND)); Serial.println(F("1-10 : ILS fermeture numéro)"));
+    Serial.print(F(RELAYPULSEDURATION_COMMAND)); Serial.println(F("1-999 : Durée impulsion relai (ms)"));
+    Serial.print(F(WAGONFILLDURATION_COMMAND)); Serial.println(F("1-9999 : Durée remplissage wagon (ms)"));
+    Serial.print(F(START_COMMAND)); Serial.println(F(" : Marche"));
+    Serial.print(F(STOP_COMMAND)); Serial.println(F(" : Arrêt"));
+    Serial.print(F(ILSSTATE_COMMAND)); Serial.println(F(" : Etat ILS"));
+    Serial.print(F(OPENRELAY_COMMAND)); Serial.println(F(" : Ouverture trémie"));
+    Serial.print(F(CLOSERELAY_COMMAND)); Serial.println(F(" : Fermeture trémie"));
+    Serial.print(F(DEBUGTOGGLE_COMMAND)); Serial.println(F(" : Bascule déverminage"));
+    Serial.print(F(INIT_COMMAND)); Serial.println(F(" : Initialisation globale"));
 }
 
 // Toggle  debug flag
@@ -299,70 +329,32 @@ void reinitAll(void) {
 void executeCommand(void) {
     Serial.print(F("Reçu: "));
     Serial.println(inputBuffer);
-    if (!strcmp(inputBuffer, "init")) {
+    if (isCommand(inputBuffer, (char*) INIT_COMMAND)) {
         reinitAll();
-    } else if (!strcmp(inputBuffer, "o")) {
+    } else if (isCommand(inputBuffer, (char*) OPENRELAY_COMMAND)) {
         startFilling();
-    } else if (!strcmp(inputBuffer, "f")) {
+    } else if (isCommand(inputBuffer, (char*) CLOSERELAY_COMMAND)) {
         stopFilling();
-    } else if (!strcmp(inputBuffer, "e")) {
+    } else if (isCommand(inputBuffer, (char*) ILSSTATE_COMMAND)) {
         displayIlsState();
-    } else if (!strcmp(inputBuffer, "m")) {
-        toggleRun();
-    } else if (!strcmp(inputBuffer, "p")) {
+    } else if (isCommand(inputBuffer, (char*) START_COMMAND)) {
+        data.isActive = true;
+    } else if (isCommand(inputBuffer, (char*) STOP_COMMAND)) {
+        data.isActive = false;
+    } else if (isCommand(inputBuffer, (char*) DEBUGTOGGLE_COMMAND)) {
         toggleDebug();
-    } else if (inputBuffer[0] == 'a') {
-        if (strlen(inputBuffer) >= 2 && strlen(inputBuffer) <= 3) {
-            inputBuffer[0] = '0';
-            uint16_t value = atoi(inputBuffer);
-            if (value >= 1 && value <= 10) {
-               data. activationIls = value;
-                saveSettings();
-            } else {
-                Serial.println(F("A1-10 seulement!"));
-            }
-        } else {
-            Serial.println(F("Nombre incorrect!"));
-        }
-    } else if (inputBuffer[0] == 'd') {
-        if (strlen(inputBuffer) >= 2 && strlen(inputBuffer) <= 3) {
-            inputBuffer[0] = '0';
-            uint16_t value = atoi(inputBuffer);
-            if (value >= 1 && value <= 10) {
-                data.deactivationIls = value;
-                saveSettings();
-            } else {
-                Serial.println(F("D1-10 seulement!")); 
-            }
-        } else {
-            Serial.println(F("Nombre incorrect!"));
-        }
-    } else if (inputBuffer[0] == 'r') {
-        if (strlen(inputBuffer) >= 2 && strlen(inputBuffer) <= 5) {
-            inputBuffer[0] = '0';
-            uint16_t value = atoi(inputBuffer);
-            if (value >= 1 && value <= 9999) {
-                data.fillingTime = value;
-                saveSettings();
-            } else {
-                Serial.println(F("R1-9999 seulement!"));
-            }
-        } else {
-            Serial.println(F("Nombre incorrect!"));
-        }
-    } else if (inputBuffer[0] == 't') {
-        if (strlen(inputBuffer) >= 2 && strlen(inputBuffer) <= 4) {
-            inputBuffer[0] = '0';
-            uint16_t value = atoi(inputBuffer);
-            if (value >= 1 && value <= 999) {
-                data.pulseTime = value;
-                saveSettings();
-            } else {
-                Serial.println(F("R1-999 seulement!"));
-            }
-        } else {
-            Serial.println(F("Nombre incorrect!"));
-        }
+    } else if (isCommandValue(inputBuffer, (char*) ILSOPEN_COMMAND, 1, 10)) { 
+        data.activationIls = commandValue;
+        saveSettings();
+    } else if (isCommandValue(inputBuffer, (char*) ILSCLOSE_COMMAND, 1, 10)) { 
+        data.deactivationIls = commandValue;
+        saveSettings();
+    } else if (isCommandValue(inputBuffer, (char*) WAGONFILLDURATION_COMMAND, 1, 9999)) {
+        data.fillingTime = commandValue;
+        saveSettings();
+    } else if (isCommandValue(inputBuffer, (char*) RELAYPULSEDURATION_COMMAND, 1, 999)) {
+        data.pulseTime = commandValue;
+        saveSettings();
     } else {
         printHelp();
     }
