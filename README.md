@@ -22,8 +22,8 @@ Les réglages sont mémorisés dans l'EEPROM de l'Arduino afin d'être disponibl
 	- interface série pour paramétrage :
 		- définition numéro ILS activation trémie(A1 à A10)
 		- définition numéro ILS désactivation trémie (D1 à D10)
-		- définition durée impulsion en 1/100eme de seconde (T1 à T99)
-		- définition durée remplissage en 1/10eme de seconde (R1 à R99)
+		- définition durée impulsion en 1/1000eme de seconde (T1 à T999)
+		- définition durée remplissage en 1/1000eme de seconde (R1 à R9999)
 		- sauvegarde paramètres en EEPROM
 		- affichage état des ILS (E)
 		- affichage aide (?)
@@ -42,7 +42,7 @@ Les réglages sont mémorisés dans l'EEPROM de l'Arduino afin d'être disponibl
 # Paramétrage :
     - on cherche la durée d'impulsion nécessaire pour ouvrir ou fermer la trémie à coup sur, sans faire chauffer les bobines,
         en augmentant/réduisant la valeur du paramètre T et utilisant les commandes O et F pour ouvrir/fermer la trémie
-	- on mesure le temps de remplissage d'un wagon au chrono, avec avancée du wagon à la main (paramètre R, valeur 1 à 99, en 1/10e de seconde)
+	- on mesure le temps de remplissage d'un wagon au chrono, avec avancée du wagon à la main (paramètre R, valeur 1 à 9999, en millisecondes)
 	- on repère le numéro de l'ILS début de remplissage  (paramètre A, valeur 1 à 10)
 	- on repère le numéro de l'ILS fin de remplissage  (paramètre D, valeur 1 à 10)
 	- on ajuste la vitesse de la loco pour que le temps entre les 2 ILS soit celui de remplissage, aidé par le retour de l'Arduino
@@ -52,7 +52,7 @@ Les réglages sont mémorisés dans l'EEPROM de l'Arduino afin d'être disponibl
 	- ferme la trémie au lancement
 	- déclenche l'ouverture sur la détection de l'ILS paramétré A, valeur 1 à 10
 	- déclenche la fermeture sur la détection de l'ILS paramétré D, valeur 1 à 10
-		ou l'expiration du temps de remplissage paramétré R, valeur 1 à 99 en 1/10e de seconde (pour éviter un débordement)
+		ou l'expiration du temps de remplissage paramétré R, valeur 1 à 9999 en millisecondes
 	- la durée du déclenchement des bobines est fixée en 1/100 s paramètre T, valeur 1 à 99)
 	- affiche en % la différence entre la durée écoulée entre A et D et celle de R
 	- répond aux commandes sur le port série

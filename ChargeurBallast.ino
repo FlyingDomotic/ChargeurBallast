@@ -1,4 +1,4 @@
-#define CODE_VERSION "V26.1.7-1"
+#define CODE_VERSION "V26.1.11-1"
 
 /*
 
@@ -32,9 +32,9 @@ Hardware Arduino Nano:
 	- interface série pour paramétrage :
 		- définition numéro ILS activation trémie(A1 à A10)
 		- définition numéro ILS désactivation trémie (D1 à D10)
-		- définition durée impulsion en 1/100eme de seconde (T1 à T99)
-		- définition durée remplissage en 1/10eme de seconde (R1 à R99)
-		- sauvegarde paramètres en EEPROM
+		- définition durée impulsion en 1/1000eme de seconde (T1 à T999)
+		- définition durée remplissage en 1/1000eme de seconde (R1 à R9999)
+        - sauvegarde paramètres en EEPROM
 		- affichage état des ILS (E)
 		- affichage aide (?)
 		- commande d'ouverture de trémie (O)
@@ -52,7 +52,7 @@ Principe utilisé :
 Paramétrage :
     - on cherche la durée d'impulsion nécessaire pour ouvrir ou fermer la trémie à coup sur, sans faire chauffer les bobines,
         en augmentant/réduisant la valeur du paramètre T et utilisant les commandes O et F pour ouvrir/fermer la trémie
-	- on mesure le temps de remplissage d'un wagon au chrono, avec avancée du wagon à la main (paramètre R, valeur 1 à 99, en 1/10e de seconde)
+	- on mesure le temps de remplissage d'un wagon au chrono, avec avancée du wagon à la main (paramètre R, valeur 1 à 9999, en millisecondes)
 	- on repère le numéro de l'ILS début de remplissage  (paramètre A, valeur 1 à 10)
 	- on repère le numéro de l'ILS fin de remplissage  (paramètre D, valeur 1 à 10)
 	- on ajuste la vitesse de la loco pour que le temps entre les 2 ILS soit celui de remplissage, aidé par le retour de l'Arduino
@@ -62,8 +62,8 @@ Code :
 	- ferme la trémie au lancement
 	- déclenche l'ouverture sur la détection de l'ILS paramétré A, valeur 1 à 10
 	- déclenche la fermeture sur la détection de l'ILS paramétré D, valeur 1 à 10
-		ou l'expiration du temps de remplissage paramétré R, valeur 1 à 99 en 1/10e de seconde (pour éviter un débordement)
-	- la durée du déclenchement des bobines est fixée en 1/100 s paramètre T, valeur 1 à 99)
+		ou l'expiration du temps de remplissage paramétré R, valeur 1 à 9999 en millisecondes
+	- la durée du déclenchement des bobines est fixée par le paramètre T, valeur 1 à 999 en millisecondes
 	- affiche en % la différence entre la durée écoulée entre A et D et celle de R
 	- répond aux commandes sur le port série
 
@@ -77,23 +77,27 @@ Licence: GNU GENERAL PUBLIC LICENSE - Version 3, 29 June 2007
 #include "EEPROM.h"
 
 //  Parameters
-uint8_t activationIls;                                              // A: ILS number to activate filling
-uint8_t deactivationIls;                                            // D: ILS number to deactivate filling
-uint8_t fillingTime;                                                // R: time (0.1s) to fill wagon
-uint8_t pulseTime;                                                  // T: time (0.01s) to send current to relay
-bool isActive = false;                                              // When active flag is true, relays are triggered by ILS
-bool inDebug = false;                                               // Print debug message when true
-bool displayIls = false;                                            // When set, continously ILS state
 
-#define FILLING_MULTIPLIER 100                                      // Multiplier to get fillingTime in ms
-#define PULSE_MULTIPLIER 10                                         // Multiplier to get pulseTime in ms
 #define MAGIC_NUMBER 59                                             // EEPROM magic byte
+#define EEPROM_VERSION 1                                            // EEPROM version
 #define BUFFER_LENGHT 50                                            // Serial input buffer length
 #define ILS_CLOSED LOW                                              // State read when ILS is closed
 #define RELAY_CLOSED LOW                                            // State to write to close relay
 #define RELAY_OPENED HIGH                                           // State to write to open relay
 #define DISPLAY_ILS_TIME 100                                        // Display ILS state every xxx ms
 
+typedef struct eepromDataV1_t {
+    uint8_t magicNumber;                                            // Magic number
+    uint8_t version;                                                // Structure version
+    uint8_t activationIls;                                          // A: ILS number to activate filling
+    uint8_t deactivationIls;                                        // D: ILS number to deactivate filling
+    uint16_t fillingTime;                                           // R: time (0.001s) to fill wagon
+    uint16_t pulseTime;                                             // T: time (0.001s) to send current to relay
+    bool isActive = false;                                          // When active flag is true, relays are triggered by ILS
+    bool inDebug = false;                                           // Print debug message when true
+};
+
+bool displayIls = false;                                            // When set, continously ILS state
 uint8_t ilsPinMapping[] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11};         // Maps ILS number to Arduino PIN number
 uint8_t relayPinMapping[] = {12, 13};                               // Maps relay number to Arduino PIN number
 
@@ -106,6 +110,8 @@ unsigned long relayPulseTime = 0;                                   // Relay plu
 unsigned long lastIlsDisplay = 0;                                   // Last time we displayed ILS
 char inputBuffer[BUFFER_LENGHT];                                    // Serial input buffer
 uint8_t bufferLen = 0;                                              // Used chars in input buffer
+
+eepromDataV1_t data;                                                // Data stored to/read from EEPROM
 
 // Routines and functions
 
@@ -130,15 +136,15 @@ void loop(void);                                                    // Main loop
 // Display current status
 void displayStatus(void) {
     Serial.print(F("A"));
-    Serial.print(activationIls);
+    Serial.print(data.activationIls);
     Serial.print(F(" D"));
-    Serial.print(deactivationIls);
+    Serial.print(data.deactivationIls);
     Serial.print(F(" R"));
-    Serial.print(fillingTime);
+    Serial.print(data.fillingTime);
     Serial.print(F(" T"));
-    Serial.print(pulseTime);
-    if (inDebug) Serial.print(F(", debug"));
-    Serial.println(isActive ? F(", en marche") : F(", à l'arrêt"));
+    Serial.print(data.pulseTime);
+    if (data.inDebug) Serial.print(F(", debug"));
+    Serial.println(data.isActive ? F(", en marche") : F(", à l'arrêt"));
 }
 
 // Load settings from EEPROM
@@ -151,32 +157,31 @@ void loadSettings(void) {
         Serial.println(F("!"));
         return;
     }
-    activationIls = EEPROM.read(1);                                 // A: ILS number to activate filling
-    deactivationIls = EEPROM.read(2);                               // D: ILS number to deactivate filling
-    fillingTime = EEPROM.read(3);                                   // R: time (0.1s) to fill wagon
-    pulseTime = EEPROM.read(4);                                     // T: time (0.01s) to send current to relay
-    isActive = EEPROM.read(5);                                      // When active flag is true, relays are triggered by ILS
-    inDebug = EEPROM.read(6);                                       // Debug flag
+    if (EEPROM.read(1) != EEPROM_VERSION) {                         // Is second byte equal to version?
+        Serial.print(F("Version est "));
+        Serial.print(EEPROM.read(1));
+        Serial.print(F(", pas "));
+        Serial.print(EEPROM_VERSION);
+        Serial.println(F("!"));
+        return;
+    }
+    EEPROM.get(0, data);                                            // Load EEPROM structure
 }
 
 // Save settings to EEPROM (only if modified)
 void saveSettings(void) {
-    EEPROM.update(0, MAGIC_NUMBER);                                 // First byte = magic number
-    EEPROM.update(1, activationIls);                                // A: ILS number to activate filling
-    EEPROM.update(2, deactivationIls);                              // D: ILS number to deactivate filling
-    EEPROM.update(3, fillingTime);                                  // R: time (0.1s) to fill wagon
-    EEPROM.update(4, pulseTime);                                    // T: time (0.01s) to send current to relay
-    EEPROM.update(5, isActive);                                     // When active flag is true, relays are triggered by ILS
-    EEPROM.update(6, inDebug);                                      // Debug flag
+    data.magicNumber = MAGIC_NUMBER;                                // Force magic number
+    data.version = EEPROM_VERSION;                                  // ... and version
+    EEPROM.put(0, data);                                            // Store structure
 }
 
 // Init settings to default values
 void initSettings(void) {
-    activationIls = 0;                                              // A: ILS number to activate filling
-    deactivationIls = 0;                                            // D: ILS number to deactivate filling
-    fillingTime = 0;                                                // R: time (0.1s) to fill wagon
-    pulseTime = 20;                                                 // T: time (0.01s) to send current to relay
-    isActive = false;                                               // When active flag is true, relays are triggered by ILS
+    data.activationIls = 0;                                         // A: ILS number to activate filling
+    data.deactivationIls = 0;                                       // D: ILS number to deactivate filling
+    data.fillingTime = 0;                                           // R: time (0.1s) to fill wagon
+    data.pulseTime = 20;                                            // T: time (0.01s) to send current to relay
+    data.isActive = false;                                          // When active flag is true, relays are triggered by ILS
 }
 
 // Reset serial input buffer
@@ -234,7 +239,7 @@ void workWithSerial(void) {
 // Start filling
 void startFilling(void) {
     unsigned long now = millis();
-    if (inDebug) {Serial.print(F("Début chargement à ")); Serial.println(now);}
+    if (data.inDebug) {Serial.print(F("Début chargement à ")); Serial.println(now);}
     digitalWrite(relayPinMapping[1], RELAY_OPENED);
     digitalWrite(relayPinMapping[0], RELAY_CLOSED);
     fillingStartTime = now;
@@ -244,7 +249,7 @@ void startFilling(void) {
 // Stop filling
 void stopFilling(void) {
     unsigned long now = millis();
-    if (inDebug) {Serial.print(F("Fin chargement à ")); Serial.print(now); Serial.print(F(", durée "));Serial.println(now - fillingStartTime);}
+    if (data.inDebug) {Serial.print(F("Fin chargement à ")); Serial.print(now); Serial.print(F(", durée "));Serial.println(now - fillingStartTime);}
     digitalWrite(relayPinMapping[0], RELAY_OPENED);
     digitalWrite(relayPinMapping[1], RELAY_CLOSED);
     fillingEndTime = now;
@@ -260,8 +265,8 @@ void displayIlsState(void) {
 void printHelp(void) {
     Serial.println(F("A1-10: numéro ILS activation"));
     Serial.println(F("D1-10: numéro ILS désactivation"));
-    Serial.println(F("R1-99: durée remplissage (0,1 s)"));
-    Serial.println(F("T1-99: durée impulsion relais (0,01 s)"));
+    Serial.println(F("R1-9999: durée remplissage (ms)"));
+    Serial.println(F("T1-999: durée impulsion relais (ms)"));
     Serial.println(F("O: ouvre trémie"));
     Serial.println(F("F: ferme trémie"));
     Serial.println(F("E: état ILS"));
@@ -273,13 +278,13 @@ void printHelp(void) {
 
 // Toggle run flag
 void toggleRun(void){
-    isActive = !isActive;
+    data.isActive = !data.isActive;
     saveSettings();
 }
 
 // Toggle  debug flag
 void toggleDebug(void){
-    inDebug = !inDebug;
+    data.inDebug = !data.inDebug;
     saveSettings();
 }
 
@@ -311,7 +316,7 @@ void executeCommand(void) {
             inputBuffer[0] = '0';
             uint16_t value = atoi(inputBuffer);
             if (value >= 1 && value <= 10) {
-                activationIls = value;
+               data. activationIls = value;
                 saveSettings();
             } else {
                 Serial.println(F("A1-10 seulement!"));
@@ -324,7 +329,7 @@ void executeCommand(void) {
             inputBuffer[0] = '0';
             uint16_t value = atoi(inputBuffer);
             if (value >= 1 && value <= 10) {
-                deactivationIls = value;
+                data.deactivationIls = value;
                 saveSettings();
             } else {
                 Serial.println(F("D1-10 seulement!")); 
@@ -333,27 +338,27 @@ void executeCommand(void) {
             Serial.println(F("Nombre incorrect!"));
         }
     } else if (inputBuffer[0] == 'r') {
-        if (strlen(inputBuffer) >= 2 && strlen(inputBuffer) <= 3) {
+        if (strlen(inputBuffer) >= 2 && strlen(inputBuffer) <= 5) {
             inputBuffer[0] = '0';
             uint16_t value = atoi(inputBuffer);
-            if (value >= 1 && value <= 99) {
-                fillingTime = value;
+            if (value >= 1 && value <= 9999) {
+                data.fillingTime = value;
                 saveSettings();
             } else {
-                Serial.println(F("R1-99 seulement!"));
+                Serial.println(F("R1-9999 seulement!"));
             }
         } else {
             Serial.println(F("Nombre incorrect!"));
         }
     } else if (inputBuffer[0] == 't') {
-        if (strlen(inputBuffer) >= 2 && strlen(inputBuffer) <= 3) {
+        if (strlen(inputBuffer) >= 2 && strlen(inputBuffer) <= 4) {
             inputBuffer[0] = '0';
             uint16_t value = atoi(inputBuffer);
-            if (value >= 1 && value <= 99) {
-                pulseTime = value;
+            if (value >= 1 && value <= 999) {
+                data.pulseTime = value;
                 saveSettings();
             } else {
-                Serial.println(F("R1-99 seulement!"));
+                Serial.println(F("R1-999 seulement!"));
             }
         } else {
             Serial.println(F("Nombre incorrect!"));
@@ -384,8 +389,8 @@ void loop(void){
     unsigned long now = millis();
 
     // Do we need to close any relay after pulse?
-    if (relayPulseTime != 0 && ((now - relayPulseTime) >= (pulseTime * PULSE_MULTIPLIER))) {
-        if (inDebug) {Serial.print(F("Fin impulsion à ")); Serial.print(now); Serial.print(F(", durée "));Serial.println(now - relayPulseTime);}
+    if (relayPulseTime != 0 && ((now - relayPulseTime) >= data.pulseTime)) {
+        if (data.inDebug) {Serial.print(F("Fin impulsion à ")); Serial.print(now); Serial.print(F(", durée "));Serial.println(now - relayPulseTime);}
         for (uint8_t i = 0; i < 2; i++) {
             digitalWrite(relayPinMapping[i], RELAY_OPENED);
         }
@@ -393,26 +398,26 @@ void loop(void){
     }
 
     // Do we need to stop filling after a too long time opened?
-    if (fillingEndTime == 0 && ((now - fillingStartTime) >= (fillingTime * FILLING_MULTIPLIER))) {
+    if (fillingEndTime == 0 && ((now - fillingStartTime) >= data.fillingTime)) {
         stopFilling();
     };
 
     // Do job if we're active
-    if (isActive) {
+    if (data.isActive) {
         // Check for activation ILS
-        if ((activationStartTime == 0) && (digitalRead(ilsPinMapping[activationIls]) == ILS_CLOSED)) {
-            if (inDebug) {Serial.println(F("Début ILS à ")); Serial.println(now);}
+        if ((activationStartTime == 0) && (digitalRead(ilsPinMapping[data.activationIls]) == ILS_CLOSED)) {
+            if (data.inDebug) {Serial.println(F("Début ILS à ")); Serial.println(now);}
             activationStartTime = now;
             startFilling();
         }
         // Check for deactivation ILS
-        if ((activationStartTime != 0) && (deactivationStartTime == 0) && (digitalRead(ilsPinMapping[deactivationIls]) == ILS_CLOSED)) {
-            deactivationIls = now;
+        if ((activationStartTime != 0) && (deactivationStartTime == 0) && (digitalRead(ilsPinMapping[data.deactivationIls]) == ILS_CLOSED)) {
+            deactivationStartTime = now;
             stopFilling();
             // Compute between ILS duration (max 65 seconds)
             uint16_t ilsDuration = deactivationStartTime - activationStartTime;
-            if (inDebug) {Serial.println(F("Fin ILS à ")); Serial.print(now); Serial.print(F(", durée ")); Serial.println(ilsDuration);}
-            uint16_t idealDuration = fillingTime * FILLING_MULTIPLIER;
+            if (data.inDebug) {Serial.println(F("Fin ILS à ")); Serial.print(now); Serial.print(F(", durée ")); Serial.println(ilsDuration);}
+            uint16_t idealDuration = data.fillingTime;
             // Avoid error if fillingTime is zero (not defined)
             if (idealDuration) {
                 // Compute percent to perfect speed
