@@ -1,4 +1,4 @@
-#define CODE_VERSION "V26.1.12-2"
+#define CODE_VERSION "V26.1.12-4"
 
 /*
 
@@ -123,6 +123,7 @@ Licence: GNU GENERAL PUBLIC LICENSE - Version 3, 29 June 2007
 #define DISPLAY_ILS_TIME 100                                        // Display ILS state every xxx ms
 #define OPEN_RELAY 0                                                // Index of open relay into relayPinMapping
 #define CLOSE_RELAY 1                                               // Index of close relay into relayPinMapping
+#define DISPLAY_KEYBOARD_INPUT                                      // Display each character read on keyboard
 
 // EEPROM data (current version)
 struct eepromData_s {
@@ -331,7 +332,6 @@ void workWithSerial(void) {
             executeCommand();
             resetInputBuffer();
         } else if (c) {
-            // Non null character
             // Keep only "A" to "Z", "a" to "z" and "0" to "9"
             if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
                 if (bufferLen >= BUFFER_LENGHT - 1) {
@@ -339,9 +339,21 @@ void workWithSerial(void) {
                     resetInputBuffer();
                 }
                 inputBuffer[bufferLen++] = c;
+            } else if (c == 8) {                                  // Is this <backspace> character?
+                if (bufferLen) {                                    // Is buffer not empty?
+                    bufferLen--;                                    // Reduce buffer len
+                    inputBuffer[bufferLen] = 0;                     // Remove charcater
+                }
             }
         }
     }
+    #ifdef DISPLAY_KEYBOARD_INPUT
+        Serial.print(F("\r"));
+        Serial.print(inputBuffer);
+        Serial.print(F("  "));
+        Serial.print(F("\r"));
+        Serial.print(inputBuffer);
+    #endif
 }
 
 // Check command without value
@@ -511,7 +523,10 @@ void reinitAll(void) {
 
 // Execute command read on serial input (a-z and 0-9)
 void executeCommand(void) {
-    Serial.print(F("Reçu: "));
+    #ifndef DISPLAY_KEYBOARD_INPUT
+        Serial.println(F(""));
+        Serial.print(F("Reçu: "));
+    #endif
     Serial.println(inputBuffer);
     if (isCommand(inputBuffer, (char*) INIT_COMMAND)) {
         reinitAll();
