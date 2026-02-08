@@ -1,4 +1,4 @@
-#define CODE_VERSION "V26.1.12-4"
+#define CODE_VERSION "V26.1.30-1"
 
 /*
 
@@ -22,8 +22,10 @@ Contrôle d'un chargeur de ballast pour train miniature
 		un chargement parfait.
 
 	Il arrive que le granulat bloque la sortie de la trémie. Pour contrer ce problème, on peut définir
-        des cycles fermetures/ouvertures de la trémie, les vibration des relais de commande de la trappe
-        décoinçant le granulat. Ces cycles peuvent être paramétrés si besoin.
+        ajouter vibreur qui sera alimenté lorsque la trémie s'ouvre jusqu'à expiration d'un temps donné
+        après la fermeture de la trémie. De plus, il est possible d'ajouter un ILS supplémentaire sur la
+        zone de déchargement, qui activera le vibreur pendant un temps donné, afin de faciliter la descente
+        du ballast dans la trémie.
     
     Les réglages sont envoyés à l'Arduino au travers de sa liaison série. Ce même moyen est utilisé pour
 		envoyer les messages à l'utilisateur.
@@ -31,24 +33,22 @@ Contrôle d'un chargeur de ballast pour train miniature
 	Les réglages sont mémorisés dans l'EEPROM de l'Arduino afin d'être disponibles après son redémarrage.
 	
 Hardware Arduino Nano:
-	- 10 entrées ILS
-	- 2 sorties relais
+	- 11 entrées ILS (10 pour l'avancement du wagon lors du chargement, 1 pour la détection du déchargement)
+	- 3 sorties relais (1 pour l'ouverture de la trémie, 1 pour sa fermeture, 1 pour le vibreur)
 	- interface série pour paramétrage :
-		- définition numéro ILS activation trémie(ILO1 à ILO10)
-		- définition numéro ILS désactivation trémie (ILF1 à IFL10)
-		- définition durée impulsion en 1/1000eme de seconde (DRW1 à DRW999)
-		- définition durée remplissage en 1/1000eme de seconde (DIR1 à DIR9999)
-        - définition de durée d'attente trémie ouverte avant fermeture (AOV0 à AV999) (vibrations)
-        - définition de la durée de l'impulsion de fermeture (IFV0 à IFV999) (vibrations)
-        - définition de la durée d'attente trémie fermée avant ouverture (AFV0 à AFV999) (vibrations)
-        - définition de la durée de l'impulsion d'ouverture (IOV1 à IOV99) (vibrations)
-		- affichage état des ILS (EI)
-		- affichage aide (?)
-		- commande d'ouverture de trémie (OT)
-		- commande de fermeture (FT)
-        - (ré)initialisation (INIT)
-        - fonction marche/arrêt (M)
-        - bascule debug (BD)
+		- définition numéro ILS activation trémie
+		- définition numéro ILS désactivation trémie
+		- définition durée impulsion en 1/1000eme de seconde
+		- définition durée remplissage en 1/1000eme de seconde
+        - définition du délai d'arrêt des vibrations au remplissage
+        - définition du délai d'arrêt des vibrations au vidage
+		- affichage état des ILS
+		- affichage aide
+		- commande d'ouverture de trémie
+		- commande de fermeture
+        - (ré)initialisation
+        - fonction marche/arrêt
+        - bascule debug
         - sauvegarde paramètres en EEPROM
 
 Principe utilisé :
@@ -66,24 +66,33 @@ Paramétrage :
 	- on ajuste la vitesse de la loco pour que le temps entre les 2 ILS soit celui de remplissage, aidé par le retour de l'Arduino
 		sur l'écart avec la vitesse idéale (ajouter le pourcentage donné par l'Arduino à la vitesse courante de la loco pour être parfait)
     - si on souhaite utiliser les vibrations :
-        - l'idée est d'utiliser les vibrations des bobines de fermeture et d'ouverture pour décoincer le granulat.
-        - tant que la trémie doit être ouverte (fixé par DIR), on active le cycle suivant :
-            - la trémie reste ouverte AOV ms
-            - on envoie une impulsion de fermeture d'IFV ms (qui peut être zéro ou très courte)
-            - la trémie reste fermée AFV ms (qui peut être zéro pour réouvrir immédiatement)
-            - on envoie une impulsion d'ouverture d'IOV ms
-        - tatonner pour voir quel est le meilleur compromis selon le granulat
-        - on désactive les vibrations en mettant IFV et IOV à zéro
+        - on active le vibreur à l'ouverture de la trémie, on l'arrête ferme après un délai à la fermeture
+        - on active le vibreur au passage sur l'ILS de vidage, on l'arrête après un autre délai à la fermeture
 
 Code :
 	- ferme la trémie au lancement
-	- déclenche l'ouverture sur la détection de l'ILS paramétré ILO, valeur 1 à 10
-	- déclenche la fermeture sur la détection de l'ILS paramétré ILF, valeur 1 à 10
-		ou l'expiration du temps de remplissage paramétré DRW, valeur 1 à 9999 en millisecondes
-	- la durée du déclenchement des bobines est fixée par le paramètre DIR, valeur 1 à 999 en millisecondes
-	- affiche en % la différence entre la durée écoulée entre ILO et ILF et celle de DRW
-    - on gère les vibrations pendant la durée de remplissage du wagon si besoin
+	- déclenche l'ouverture sur la détection de l'ILS paramétré
+	- déclenche la fermeture sur la détection de l'ILS paramétré
+		ou l'expiration du temps de remplissage paramétré
+	- la durée du déclenchement des bobines est fixée par le paramètre paramétré
+	- affiche en % la différence entre la durée écoulée entre les ILS d'ouverture et de fermeture et la durée de remplissage du wagon
+    - on gère les vibrations pendant la durée de remplissage (et de vidage) du wagon si besoin
 	- répond aux commandes sur le port série
+
+Commandes :
+    - IO1-10 : ILS ouverture (numéro)
+    - IF1-10 : ILS fermeture( numéro)
+    - DI1-999 : Durée impulsion relai (ms)
+    - DR1-9999 : Durée remplissage wagon (ms)
+    - RR0-9999 : Retard remplissage vibrations (ms)
+    - RV0-9999 : Retard vidage vibrations (ms)
+    - M : Marche
+    - A : Arrêt
+    - E : Etat ILS
+    - O : Ouverture trémie
+    - F : Fermeture trémie
+    - D : Bascule déverminage
+    - INIT : Initialisation globale
 
 Auteur : Flying Domotic, Février 2025, pour le FabLab
 Licence: GNU GENERAL PUBLIC LICENSE - Version 3, 29 June 2007
@@ -96,26 +105,25 @@ Licence: GNU GENERAL PUBLIC LICENSE - Version 3, 29 June 2007
 
 // Command and text
 
-#define ILSOPEN_COMMAND "ILO"
-#define ILSCLOSE_COMMAND "ILF"
-#define RELAYPULSEDURATION_COMMAND "DIR"
-#define WAGONFILLDURATION_COMMAND "DRW"
+#define ILSOPEN_COMMAND "IO"
+#define ILSCLOSE_COMMAND "IF"
+#define RELAYPULSEDURATION_COMMAND "DI"
+#define WAGONFILLDURATION_COMMAND "DR"
+#define LOADDELAY_COMMAND "RR"
+#define UNLOADDELAY_COMMAND "RV"
 #define START_COMMAND "M"
 #define STOP_COMMAND "A"
-#define ILSSTATE_COMMAND "EI"
-#define OPENVIBRATIONPULSE_COMMAND "IOV"
-#define CLOSEVIBRATIONPULSE_COMMAND "IFV"
-#define OPENVIBRATIONWAIT_COMMAND "AOV"
-#define CLOSEVIBRATIONWAIT_COMMAND "AFV"
-#define OPENRELAY_COMMAND "OT"
-#define CLOSERELAY_COMMAND "FT"
-#define DEBUGTOGGLE_COMMAND "BD"
+#define ILSSTATE_COMMAND "E"
+#define OPENRELAY_COMMAND "O"
+#define CLOSERELAY_COMMAND "F"
+#define DEBUGTOGGLE_COMMAND "D"
 #define INIT_COMMAND "INIT"
+
 
 //  Parameters
 
 #define MAGIC_NUMBER 59                                             // EEPROM magic byte
-#define EEPROM_VERSION 2                                            // EEPROM version
+#define EEPROM_VERSION 3                                            // EEPROM version
 #define BUFFER_LENGHT 50                                            // Serial input buffer length
 #define ILS_CLOSED LOW                                              // State read when ILS is closed
 #define RELAY_CLOSED LOW                                            // State to write to close relay
@@ -123,10 +131,25 @@ Licence: GNU GENERAL PUBLIC LICENSE - Version 3, 29 June 2007
 #define DISPLAY_ILS_TIME 100                                        // Display ILS state every xxx ms
 #define OPEN_RELAY 0                                                // Index of open relay into relayPinMapping
 #define CLOSE_RELAY 1                                               // Index of close relay into relayPinMapping
+#define VIBRATION_RELAY 2                                           // Index of vibration relay into relayPinMapping
 #define DISPLAY_KEYBOARD_INPUT                                      // Display each character read on keyboard
 
 // EEPROM data (current version)
 struct eepromData_s {
+    uint8_t magicNumber;                                            // Magic number
+    uint8_t version;                                                // Structure version
+    uint8_t activationIls;                                          // ILS number to activate filling
+    uint8_t deactivationIls;                                        // ILS number to deactivate filling
+    uint16_t fillingTime;                                           // Time (0.001s) to fill wagon
+    uint16_t pulseTime;                                             // Time (0.001s) to send current to relay
+    bool isActive;                                                  // When active flag is true, relays are triggered by ILS
+    bool inDebug;                                                   // Print debug message when true
+    uint16_t loadDelay;                                             // Keep vibrations after load
+    uint16_t unloadDelay;                                           // Keep vibrations after unload
+};
+
+// EEPROM data (V2 version)
+struct eepromDataV2_s {
     uint8_t magicNumber;                                            // Magic number
     uint8_t version;                                                // Structure version
     uint8_t activationIls;                                          // ILS number to activate filling
@@ -154,29 +177,19 @@ struct eepromDataV1_s {
 };
 
 bool displayIls = false;                                            // When set, continously display ILS state
-uint8_t ilsPinMapping[] = {2, 3, 4, 5, 6, 7, 8, 9, 10, 11};         // Maps ILS number to Arduino PIN number
-uint8_t relayPinMapping[] = {12, 13};                               // Maps relay number to Arduino PIN number
-
-// Vibration states
-typedef enum {
-    vibrationOff = 0,
-    waitOpened,
-    pulseClose,
-    waitClosed,
-    pulseOpen
-} vibrationState_t;
+uint8_t ilsPinMapping[] = {4, 5, 6, 7, A5, A4, A3, A2,A1, A0, 13};  // Maps ILS number to Arduino PIN number
+uint8_t relayPinMapping[] = {12, 11, 10};                           // Maps relay number to Arduino PIN number
 
 // Data
 unsigned long fillingStartTime = 0;                                 // Filling start time (0 if none)
 unsigned long fillingEndTime = 0;                                   // Filling end time (0 if none)
 unsigned long relayPulseTime = 0;                                   // Relay plusing start time
 unsigned long lastIlsDisplay = 0;                                   // Last time we displayed ILS
-unsigned long vibrationTime = 0;                                    // Last vibration change time
-unsigned long vibrationDuration = 0;                                // duration before next step
+unsigned long vibrationLoadTime = 0;                                // Last vibration load time
+unsigned long vibrationUnloadTime = 0;                              // Last vibration unload time
 uint16_t commandValue;                                              // Value extracted from command
 uint8_t bufferLen = 0;                                              // Used chars in input buffer
 char inputBuffer[BUFFER_LENGHT];                                    // Serial input buffer
-vibrationState_t vibrationState = vibrationOff;                     // Where we are in vibration
 eepromData_s data;                                                  // Data stored to/read from EEPROM
 
 // Routines and functions
@@ -192,7 +205,9 @@ bool isCommand(char* inputBuffer, char* commandToCheck);            // Check com
 bool isCommandValue(char* inputBuffer, char* commandToCheck, uint16_t minValue, uint16_t maxValue); // Check command with value
 void startFilling(void);                                            // Start filling
 void stopFilling(void);                                             // Stop filling
-void setVibrationNextStep(void);                                    // Set next step in vibration sequence
+void startUnloading(void);                                          // Start unloading process
+void startVibration(void);                                          // Start vibration relay
+void stopVibration(void);                                           // Stop vibration relay
 void displayIlsState(void);                                         // Display all ILS state
 void printHelp(void);                                               // Print help message
 void toggleDebug(void);                                             // Toggle  debug flag
@@ -211,28 +226,15 @@ void displayStatus(void) {
     Serial.print(F(" "));
     Serial.print(F(WAGONFILLDURATION_COMMAND));
     Serial.print(data.fillingTime);
-    Serial.print(F(" "));
-    Serial.print(F(RELAYPULSEDURATION_COMMAND));
-    Serial.print(data.pulseTime);
-    if (data.openVibrationWait) {
+    if (data.loadDelay) {
         Serial.print(F(" "));
-        Serial.print(F(OPENVIBRATIONWAIT_COMMAND));
-        Serial.print(data.openVibrationWait);
+        Serial.print(F(LOADDELAY_COMMAND));
+        Serial.print(data.loadDelay);
     }
-    if (data.closeVibrationPulse) {
+    if (data.unloadDelay) {
         Serial.print(F(" "));
-        Serial.print(F(CLOSEVIBRATIONPULSE_COMMAND));
-        Serial.print(data.closeVibrationPulse);
-    }
-    if (data.closeVibrationWait) {
-        Serial.print(F(" "));
-        Serial.print(F(CLOSEVIBRATIONWAIT_COMMAND));
-        Serial.print(data.closeVibrationWait);
-    }
-    if (data.openVibrationPulse) {
-        Serial.print(F(" "));
-        Serial.print(F(OPENVIBRATIONPULSE_COMMAND));
-        Serial.print(data.openVibrationPulse);
+        Serial.print(F(UNLOADDELAY_COMMAND));
+        Serial.print(data.unloadDelay);
     }
     if (data.inDebug) Serial.print(F(", déverminage"));
     Serial.println(data.isActive ? F(", en marche") : F(", à l'arrêt"));
@@ -261,6 +263,15 @@ void loadSettings(void) {
         data.isActive = v1Data.isActive;
         data.inDebug = v1Data.inDebug;
     } else if (version == 2) {
+        eepromDataV2_s v2Data;                                      // V2 data structure
+        EEPROM.get(0, v2Data);                                      // Load EEPROM V2 structure
+        data.activationIls = v2Data.activationIls;
+        data.deactivationIls = v2Data.deactivationIls;
+        data.fillingTime = v2Data.fillingTime;
+        data.pulseTime = v2Data.pulseTime;
+        data.isActive = v2Data.isActive;
+        data.inDebug = v2Data.inDebug;
+    } else if (version == 3) {
         EEPROM.get(0, data);                                        // Load EEPROM V2 structure
     } else {
         Serial.print(F("Version est "));
@@ -291,10 +302,8 @@ void initSettings(void) {
     data.pulseTime = 100;                                           // Time to send current to relay
     data.isActive = false;                                          // When active flag is true, relays are triggered by ILS
     data.inDebug = false;                                           // Print debug message when true
-    data.openVibrationWait = 0;                                     // Time to wait in open state for vibrations
-    data.closeVibrationWait = 0;                                    // Time to wait in closed state for vibrations
-    data.openVibrationPulse = 0;                                    // Open pulse duration for vibration
-    data.closeVibrationPulse = 0;                                   // Close pulse duration for vibration
+    data.loadDelay = 0;                                             // Keep vibrations after load
+    data.unloadDelay = 0;                                           // Keep vibrations after unload
 }
 
 // Reset serial input buffer
@@ -306,7 +315,7 @@ void resetInputBuffer(void) {
 // Init IO pins
 void initIO(void) {
     // Set ILS PIN to input with pullup resistor
-    for (uint8_t i = 0; i < 10; i++) {
+    for (uint8_t i = 0; i < 11; i++) {
         pinMode(ilsPinMapping[i], INPUT_PULLUP);
     }
     // Set relay PIN to output, init level = opened
@@ -391,15 +400,6 @@ void startFilling(void) {
     digitalWrite(relayPinMapping[OPEN_RELAY], RELAY_CLOSED);
     fillingStartTime = now;
     relayPulseTime = now;
-    // Start vibration if needed
-    if (data.closeVibrationPulse || data.openVibrationPulse) {
-        vibrationTime = now;
-        vibrationDuration = data.openVibrationWait;
-        vibrationState = waitOpened;
-        if (data.inDebug) {
-            Serial.println(F("Début attente ouvert"));
-        }
-    }
 }
 
 // Stop filling
@@ -415,73 +415,38 @@ void stopFilling(void) {
     digitalWrite(relayPinMapping[CLOSE_RELAY], RELAY_CLOSED);
     fillingEndTime = now;
     relayPulseTime = now;
-    // Stop vibration
-    vibrationState = vibrationOff;
+    // Keep vibrations after load
+    vibrationLoadTime = millis();
 }
 
-void setVibrationNextStep(void) {
-    unsigned long now = millis();
-    if (vibrationState == waitOpened) {                             // We're at end of wait opened
-        if (data.closeVibrationPulse) {                             // Do we have a close pulse
-            if (data.inDebug) {
-                Serial.print(F("Fin attente ouvert à "));
-                Serial.print(now);
-                Serial.print(F(", durée "));
-                Serial.println(now - vibrationTime);
-            }
-            vibrationTime = now;                                    // Yes, save time
-            vibrationDuration = data.closeVibrationPulse;           // ... and duration
-            vibrationState = pulseClose;                            // Update state
-            digitalWrite(relayPinMapping[OPEN_RELAY], RELAY_OPENED);// Release open relay
-            digitalWrite(relayPinMapping[CLOSE_RELAY], RELAY_CLOSED);// Set close relay
-            return;
-        }
-        vibrationState = waitClosed;                                // Skip pulse close and set end of waitClosed
-    }
-    
-    if (vibrationState == pulseClose) {
-        if (data.inDebug) {
-            Serial.print(F("Fin impulsion fermeture à "));
-            Serial.print(now);
-            Serial.print(F(", durée "));
-            Serial.println(now - vibrationTime);
-        }
-        digitalWrite(relayPinMapping[CLOSE_RELAY], RELAY_OPENED);   // Release close relay
-        vibrationTime = now;                                        // Save time
-        vibrationDuration = data.closeVibrationWait;                // ... and duration
-        vibrationState = waitClosed;                                // Update state
-    }
 
-    if (vibrationState == waitClosed) {
-        if (data.openVibrationPulse) {                              // Do we have an open pulse
-            if (data.inDebug) {
-                Serial.print(F("Fin attente fermé à "));
-                Serial.print(now);
-                Serial.print(F(", durée "));
-                Serial.println(now - vibrationTime);
-            }
-            vibrationTime = now;                                    // Yes, save time
-            vibrationDuration = data.openVibrationPulse;            // ... and duration
-            vibrationState = pulseOpen;                             // Update state
-            digitalWrite(relayPinMapping[CLOSE_RELAY], RELAY_OPENED);// Release close relay
-            digitalWrite(relayPinMapping[OPEN_RELAY], RELAY_CLOSED);// Set open relay
-            return;
-        }
-        vibrationState = waitOpened;                                // Skip pulse open and set end of waitOpen
-
-    }
-    if (vibrationState == pulseOpen) {
+// Start unloading process
+void startUnloading(void) {
+    if (!vibrationLoadTime) {
         if (data.inDebug) {
-            Serial.print(F("Fin impulsion ouverture à "));
-            Serial.print(now);
-            Serial.print(F(", durée "));
-            Serial.println(now - vibrationTime);
+            Serial.println(F("Début déchargement"));
         }
-        digitalWrite(relayPinMapping[OPEN_RELAY], RELAY_OPENED);    // Release open relay
-        vibrationTime = now;                                        // Save time
-        vibrationDuration = data.openVibrationWait;                 // ... and duration
-        vibrationState = waitOpened;                                // Update state
+        startVibration();
     }
+    vibrationUnloadTime = millis();
+}
+
+// Start vibration relay
+void startVibration(void) {
+    if (data.inDebug) {
+        Serial.println(F("Début vibrations"));
+    }
+    digitalWrite(relayPinMapping[VIBRATION_RELAY], RELAY_CLOSED);
+}
+
+// Stop vibration relay
+void stopVibration(void) {
+    if (data.inDebug) {
+        Serial.println(F("Fin vibrations"));
+    }
+    digitalWrite(relayPinMapping[VIBRATION_RELAY], RELAY_OPENED);
+    vibrationLoadTime = 0;
+    vibrationUnloadTime = 0;
 }
 
 // Display all ILS state
@@ -492,16 +457,14 @@ void displayIlsState(void) {
 // Print help message
 void printHelp(void) {
     Serial.print(F(ILSOPEN_COMMAND)); Serial.println(F("1-10 : ILS ouverture (numéro)"));
-    Serial.print(F(ILSCLOSE_COMMAND)); Serial.println(F("1-10 : ILS fermeture numéro)"));
+    Serial.print(F(ILSCLOSE_COMMAND)); Serial.println(F("1-10 : ILS fermeture( numéro)"));
     Serial.print(F(RELAYPULSEDURATION_COMMAND)); Serial.println(F("1-999 : Durée impulsion relai (ms)"));
     Serial.print(F(WAGONFILLDURATION_COMMAND)); Serial.println(F("1-9999 : Durée remplissage wagon (ms)"));
+    Serial.print(F(LOADDELAY_COMMAND)); Serial.println(F("0-9999 : Retard remplissage vibrations (ms)"));
+    Serial.print(F(UNLOADDELAY_COMMAND)); Serial.println(F("0-9999 : Retard vidage vibrations (ms)"));
     Serial.print(F(START_COMMAND)); Serial.println(F(" : Marche"));
     Serial.print(F(STOP_COMMAND)); Serial.println(F(" : Arrêt"));
     Serial.print(F(ILSSTATE_COMMAND)); Serial.println(F(" : Etat ILS"));
-    Serial.print(F(OPENVIBRATIONPULSE_COMMAND)); Serial.println(F("0-9999 : Impulsion ouverture vibration (ms)"));
-    Serial.print(F(CLOSEVIBRATIONPULSE_COMMAND)); Serial.println(F("0-9999 : Impulsion fermeture vibration (ms)"));
-    Serial.print(F(OPENVIBRATIONWAIT_COMMAND)); Serial.println(F("0-9999 : Attente ouverture vibration (ms)"));
-    Serial.print(F(CLOSEVIBRATIONWAIT_COMMAND)); Serial.println(F("0-9999 : Attente fermeture vibration (ms)"));
     Serial.print(F(OPENRELAY_COMMAND)); Serial.println(F(" : Ouverture trémie"));
     Serial.print(F(CLOSERELAY_COMMAND)); Serial.println(F(" : Fermeture trémie"));
     Serial.print(F(DEBUGTOGGLE_COMMAND)); Serial.println(F(" : Bascule déverminage"));
@@ -557,17 +520,11 @@ void executeCommand(void) {
     } else if (isCommandValue(inputBuffer, (char*) RELAYPULSEDURATION_COMMAND, 1, 999)) {
         data.pulseTime = commandValue;
         saveSettings();
-    } else if (isCommandValue(inputBuffer, (char*) OPENVIBRATIONWAIT_COMMAND, 1, 9999)) {
-        data.openVibrationWait = commandValue;
+    } else if (isCommandValue(inputBuffer, (char*) LOADDELAY_COMMAND, 1, 9999)) {
+        data.loadDelay = commandValue;
         saveSettings();
-    } else if (isCommandValue(inputBuffer, (char*) CLOSEVIBRATIONWAIT_COMMAND, 1, 9999)) {
-        data.closeVibrationWait = commandValue;
-        saveSettings();
-    } else if (isCommandValue(inputBuffer, (char*) OPENVIBRATIONPULSE_COMMAND, 1, 9999)) {
-        data.openVibrationPulse = commandValue;
-        saveSettings();
-    } else if (isCommandValue(inputBuffer, (char*) CLOSEVIBRATIONPULSE_COMMAND, 1, 9999)) {
-        data.closeVibrationPulse = commandValue;
+    } else if (isCommandValue(inputBuffer, (char*) UNLOADDELAY_COMMAND, 1, 9999)) {
+        data.unloadDelay = commandValue;
         saveSettings();
     } else {
         printHelp();
@@ -653,13 +610,15 @@ void loop(void){
             fillingStartTime = 0;
             fillingEndTime = 0;
         }
+        // Check for unload ILS
+        if (digitalRead(ilsPinMapping[10]) == ILS_CLOSED) {
+            startUnloading();
+        }
     }
 
-    // Is vibration active?
-    if (vibrationState != vibrationOff && ((now - vibrationTime) >= vibrationDuration)) {
-        setVibrationNextStep();
+    if (((now - vibrationLoadTime) >= data.loadDelay) && ((now - vibrationUnloadTime) >= data.unloadDelay)) {
+        stopVibration();
     }
-
     // Scan serial for input
     if (Serial.available()) {
         workWithSerial();
@@ -676,6 +635,12 @@ void loop(void){
                     Serial.print(F("-"));
                 }
                 Serial.print(F(" "));
+            }
+            // Display unload vibrations ILS
+            if (digitalRead(ilsPinMapping[10]) == ILS_CLOSED) {
+                Serial.print("D");
+            } else {
+                Serial.print(F("-"));
             }
             Serial.print(F(" "));
             lastIlsDisplay = millis();
