@@ -1,4 +1,4 @@
-#define CODE_VERSION "V26.2.11-1"
+#define CODE_VERSION "V26.2.12-1"
 
 /*
 
@@ -25,7 +25,10 @@ Contrôle d'un chargeur de ballast pour train miniature
         un vibreur qui sera alimenté lorsque la trémie s'ouvre jusqu'à expiration d'un temps donné
         après la fermeture de la trémie. De plus, il est possible d'ajouter un ILS supplémentaire sur la
         zone de déchargement, qui activera également le vibreur pendant un temps donné, afin de faciliter
-        la descente du ballast dans la trémie.
+        la descente du ballast dans la trémie. Sur certains modèles de trémie, il arrive que ces vibrations
+        (ré)ouvrent la trémie. Pour contrer cette tendance, il est possible de définir un délai de
+        refermeture de la trémie, qui renverra une impulsion de fermeture à intervalle régulier tant que
+        les vibrations seront actives.
     
     Les réglages sont envoyés à l'Arduino au travers de sa liaison série. Ce même moyen est utilisé pour
 		envoyer les messages à l'utilisateur.
@@ -42,13 +45,15 @@ Hardware Arduino Nano:
 		- définition durée remplissage en 1/1000eme de seconde
         - définition du délai d'arrêt des vibrations au remplissage
         - définition du délai d'arrêt des vibrations au vidage
+        - définition du délai de refermeture (ou contrer la réouverture par les vibrations)
 		- affichage état des ILS
 		- affichage aide
 		- commande d'ouverture de trémie
 		- commande de fermeture
         - (ré)initialisation
         - fonction marche/arrêt
-        - bascule debug
+        - bascule déverminage
+        - affichage de la liste des variables
         - sauvegarde paramètres en EEPROM
 
 Principe utilisé :
@@ -86,6 +91,7 @@ Commandes :
     - DR1-9999 : Durée remplissage wagon (ms)
     - RR0-9999 : Retard remplissage vibrations (ms)
     - RV0-9999 : Retard vidage vibrations (ms)
+    - RF0-9999 : Répétition fermeture (ms)
     - M : Marche
     - A : Arrêt
     - E : Etat ILS
@@ -112,6 +118,7 @@ Licence: GNU GENERAL PUBLIC LICENSE - Version 3, 29 June 2007
 #define WAGON_FILL_DURATION_COMMAND "DR"
 #define LOAD_DELAY_COMMAND "RR"
 #define UNLOAD_DELAY_COMMAND "RV"
+#define RECLOSE_DELAY_COMMAND "RF"
 #define START_COMMAND "M"
 #define STOP_COMMAND "A"
 #define ILS_STATE_COMMAND "E"
@@ -120,7 +127,6 @@ Licence: GNU GENERAL PUBLIC LICENSE - Version 3, 29 June 2007
 #define DEBUG_TOGGLE_COMMAND "D"
 #define INIT_COMMAND "INIT"
 #define DISPLAY_VARIABLES_COMMAND "AV"
-
 
 //  Parameters
 
@@ -148,6 +154,7 @@ struct eepromData_s {
     bool inDebug;                                                   // Print debug message when true
     uint16_t loadDelay;                                             // Duration (ms) to keep vibrations after load (here even if VIBRATION_RELAY not set)
     uint16_t unloadDelay;                                           // Duration (ms) to keep vibrations after unload (here even if VIBRATION_RELAY not set)
+    uint16_t repeatCloseDelay;                                      // Duration (ms) to force close relay when vibration active and door closed
 };
 
 // EEPROM data (V2 version, not used anymore but converted to new version if needed)
@@ -189,6 +196,7 @@ unsigned long fillingEndTime = 0;                                   // Filling e
 unsigned long relayPulseTime = 0;                                   // Relay plusing start time
 unsigned long lastIlsDisplay = 0;                                   // Last time we displayed ILS
 #ifdef VIBRATION_RELAY
+    unsigned long repeatCloseTime = 0;                              // Force to repeat close during vibration
     unsigned long vibrationLoadTime = 0;                            // Last vibration load time
     unsigned long vibrationUnloadTime = 0;                          // Last vibration unload time
 #endif
@@ -257,6 +265,11 @@ void displayStatus(void) {
             Serial.print(F(" "));
             Serial.print(F(UNLOAD_DELAY_COMMAND));
             Serial.print(data.unloadDelay);
+        }
+        if (data.repeatCloseDelay) {
+            Serial.print(F(" "));
+            Serial.print(F(RECLOSE_DELAY_COMMAND));
+            Serial.print(data.repeatCloseDelay);
         }
     #endif
     if (data.inDebug) Serial.print(F(", déverminage"));
@@ -327,6 +340,7 @@ void initSettings(void) {
     data.inDebug = false;                                           // Print debug message when true
     data.loadDelay = 0;                                             // Keep vibrations after load
     data.unloadDelay = 0;                                           // Keep vibrations after unload
+    data.repeatCloseDelay = 0;                                      // Force close relay when vibration active and door closed
 }
 
 // Reset serial input buffer
@@ -494,6 +508,7 @@ void printHelp(void) {
     #ifdef VIBRATION_RELAY
         Serial.print(F(LOAD_DELAY_COMMAND)); Serial.println(F("0-9999 : Retard remplissage vibrations (ms)"));
         Serial.print(F(UNLOAD_DELAY_COMMAND)); Serial.println(F("0-9999 : Retard vidage vibrations (ms)"));
+        Serial.print(F(RECLOSE_DELAY_COMMAND)); Serial.println(F("0-9999 : Répétition fermeture (ms)"));
     #endif
     Serial.print(F(START_COMMAND)); Serial.println(F(" : Marche"));
     Serial.print(F(STOP_COMMAND)); Serial.println(F(" : Arrêt"));
@@ -562,6 +577,9 @@ void executeCommand(void) {
     } else if (isCommandValue(inputBuffer, (char*) UNLOAD_DELAY_COMMAND, 1, 9999)) {
         data.unloadDelay = commandValue;
         saveSettings();
+    } else if (isCommandValue(inputBuffer, (char*) RECLOSE_DELAY_COMMAND, 1, 9999)) {
+        data.repeatCloseDelay = commandValue;
+        saveSettings();
     } else {
         if (inputBuffer[0]) {
             printHelp();
@@ -609,8 +627,13 @@ void setRelay(uint8_t index, uint8_t state){
     digitalWrite(relayPinMapping[index], state);
     relayState[index] = state;
     // Set door opened depnding on states
-    if (index == OPEN_RELAY && state) doorOpened = true;
-    if (index == CLOSE_RELAY && state) doorOpened = false;
+    if (index == OPEN_RELAY && state == RELAY_CLOSED) {
+        doorOpened = true;
+    }
+    if (index == CLOSE_RELAY && state == RELAY_CLOSED) {
+        repeatCloseTime = getMillis();
+        doorOpened = false;
+    }
 }
 
 // Setup
@@ -702,10 +725,21 @@ void loop(void){
     }
 
     #ifdef VIBRATION_RELAY
+        // Stop vibration if more than load/unload time
         if (((!vibrationLoadTime) || ((now - vibrationLoadTime) >= data.loadDelay))
                 && ((!vibrationUnloadTime) || ((now - vibrationUnloadTime) >= data.unloadDelay))) {
             if (vibrationLoadTime || vibrationUnloadTime) {
                 stopVibration();
+            }
+        }
+
+        // Force close when vibration is active and door closed
+        if (!doorOpened && relayState[VIBRATION_RELAY] == RELAY_CLOSED) {
+            if ((now - repeatCloseTime) > data.repeatCloseDelay) {
+                repeatCloseTime = now;
+                setRelay(CLOSE_RELAY, RELAY_CLOSED);
+                relayPulseTime = now;
+
             }
         }
     #endif
