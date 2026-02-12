@@ -1,4 +1,4 @@
-#define CODE_VERSION "V26.1.30-1"
+#define CODE_VERSION "V26.2.11-1"
 
 /*
 
@@ -21,11 +21,11 @@ Contrôle d'un chargeur de ballast pour train miniature
 		chargement et la vitesse optimale. Si on modifie la vitesse du train en proportion, on aura
 		un chargement parfait.
 
-	Il arrive que le granulat bloque la sortie de la trémie. Pour contrer ce problème, on peut définir
-        ajouter vibreur qui sera alimenté lorsque la trémie s'ouvre jusqu'à expiration d'un temps donné
+	Il arrive que le granulat bloque la sortie de la trémie. Pour contrer ce problème, on peut ajouter
+        un vibreur qui sera alimenté lorsque la trémie s'ouvre jusqu'à expiration d'un temps donné
         après la fermeture de la trémie. De plus, il est possible d'ajouter un ILS supplémentaire sur la
-        zone de déchargement, qui activera le vibreur pendant un temps donné, afin de faciliter la descente
-        du ballast dans la trémie.
+        zone de déchargement, qui activera également le vibreur pendant un temps donné, afin de faciliter
+        la descente du ballast dans la trémie.
     
     Les réglages sont envoyés à l'Arduino au travers de sa liaison série. Ce même moyen est utilisé pour
 		envoyer les messages à l'utilisateur.
@@ -81,7 +81,7 @@ Code :
 
 Commandes :
     - IO1-10 : ILS ouverture (numéro)
-    - IF1-10 : ILS fermeture( numéro)
+    - IF1-10 : ILS fermeture (numéro)
     - DI1-999 : Durée impulsion relai (ms)
     - DR1-9999 : Durée remplissage wagon (ms)
     - RR0-9999 : Retard remplissage vibrations (ms)
@@ -92,6 +92,7 @@ Commandes :
     - O : Ouverture trémie
     - F : Fermeture trémie
     - D : Bascule déverminage
+    - AV : Affiche variables
     - INIT : Initialisation globale
 
 Auteur : Flying Domotic, Février 2025, pour le FabLab
@@ -105,19 +106,20 @@ Licence: GNU GENERAL PUBLIC LICENSE - Version 3, 29 June 2007
 
 // Command and text
 
-#define ILSOPEN_COMMAND "IO"
-#define ILSCLOSE_COMMAND "IF"
-#define RELAYPULSEDURATION_COMMAND "DI"
-#define WAGONFILLDURATION_COMMAND "DR"
-#define LOADDELAY_COMMAND "RR"
-#define UNLOADDELAY_COMMAND "RV"
+#define ILS_OPEN_COMMAND "IO"
+#define ILS_CLOSE_COMMAND "IF"
+#define RELAY_PULSE_DURATION_COMMAND "DI"
+#define WAGON_FILL_DURATION_COMMAND "DR"
+#define LOAD_DELAY_COMMAND "RR"
+#define UNLOAD_DELAY_COMMAND "RV"
 #define START_COMMAND "M"
 #define STOP_COMMAND "A"
-#define ILSSTATE_COMMAND "E"
-#define OPENRELAY_COMMAND "O"
-#define CLOSERELAY_COMMAND "F"
-#define DEBUGTOGGLE_COMMAND "D"
+#define ILS_STATE_COMMAND "E"
+#define OPEN_RELAY_COMMAND "O"
+#define CLOSE_RELAY_COMMAND "F"
+#define DEBUG_TOGGLE_COMMAND "D"
 #define INIT_COMMAND "INIT"
+#define DISPLAY_VARIABLES_COMMAND "AV"
 
 
 //  Parameters
@@ -144,11 +146,11 @@ struct eepromData_s {
     uint16_t pulseTime;                                             // Time (0.001s) to send current to relay
     bool isActive;                                                  // When active flag is true, relays are triggered by ILS
     bool inDebug;                                                   // Print debug message when true
-    uint16_t loadDelay;                                             // Keep vibrations after load
-    uint16_t unloadDelay;                                           // Keep vibrations after unload
+    uint16_t loadDelay;                                             // Duration (ms) to keep vibrations after load (here even if VIBRATION_RELAY not set)
+    uint16_t unloadDelay;                                           // Duration (ms) to keep vibrations after unload (here even if VIBRATION_RELAY not set)
 };
 
-// EEPROM data (V2 version)
+// EEPROM data (V2 version, not used anymore but converted to new version if needed)
 struct eepromDataV2_s {
     uint8_t magicNumber;                                            // Magic number
     uint8_t version;                                                // Structure version
@@ -164,7 +166,7 @@ struct eepromDataV2_s {
     uint16_t closeVibrationPulse;                                   // Close pulse duration for vibration
 };
 
-// EEPROM data (V1 version)
+// EEPROM data (V1 version, not used anymore but converted to new version if needed))
 struct eepromDataV1_s {
     uint8_t magicNumber;                                            // Magic number
     uint8_t version;                                                // Structure version
@@ -177,23 +179,28 @@ struct eepromDataV1_s {
 };
 
 bool displayIls = false;                                            // When set, continously display ILS state
-uint8_t ilsPinMapping[] = {4, 5, 6, 7, A5, A4, A3, A2,A1, A0, 13};  // Maps ILS number to Arduino PIN number
-uint8_t relayPinMapping[] = {12, 11, 10};                           // Maps relay number to Arduino PIN number
+uint8_t ilsPinMapping[] = {4, 5, 6, 7, A5, A4, A3, A2, A1, A0, 2};  // Maps ILS number to Arduino PIN number
+uint8_t relayPinMapping[] = {12, 11, 10, 9};                        // Maps relay number to Arduino PIN number
+uint8_t relayState[] = {0, 0, 0, 0};                                // Relay current state
 
 // Data
 unsigned long fillingStartTime = 0;                                 // Filling start time (0 if none)
 unsigned long fillingEndTime = 0;                                   // Filling end time (0 if none)
 unsigned long relayPulseTime = 0;                                   // Relay plusing start time
 unsigned long lastIlsDisplay = 0;                                   // Last time we displayed ILS
-unsigned long vibrationLoadTime = 0;                                // Last vibration load time
-unsigned long vibrationUnloadTime = 0;                              // Last vibration unload time
+#ifdef VIBRATION_RELAY
+    unsigned long vibrationLoadTime = 0;                            // Last vibration load time
+    unsigned long vibrationUnloadTime = 0;                          // Last vibration unload time
+#endif
 uint16_t commandValue;                                              // Value extracted from command
 uint8_t bufferLen = 0;                                              // Used chars in input buffer
 char inputBuffer[BUFFER_LENGHT];                                    // Serial input buffer
+bool doorOpened = false;                                            // Is door opened?
 eepromData_s data;                                                  // Data stored to/read from EEPROM
 
 // Routines and functions
 
+unsigned long getMillis(void);                                      // Millis() implementation never returning 0
 void displayStatus(void);                                           // Display current status
 void loadSettings(void);                                            // Load settings from EEPROM
 void saveSettings(void);                                            // Save settings to EEPROM (only if modified)
@@ -204,38 +211,54 @@ void workWithSerial(void);                                          // Work with
 bool isCommand(char* inputBuffer, char* commandToCheck);            // Check command without value
 bool isCommandValue(char* inputBuffer, char* commandToCheck, uint16_t minValue, uint16_t maxValue); // Check command with value
 void startFilling(void);                                            // Start filling
-void stopFilling(void);                                             // Stop filling
-void startUnloading(void);                                          // Start unloading process
-void startVibration(void);                                          // Start vibration relay
-void stopVibration(void);                                           // Stop vibration relay
+void stopFilling(unsigned long now);                                // Stop filling
+#ifdef VIBRATION_RELAY
+    void startUnloading(unsigned long now);                                      // Start unloading process
+    void startVibration(void);                                      // Start vibration relay
+    void stopVibration(void);                                       // Stop vibration relay
+#endif
 void displayIlsState(void);                                         // Display all ILS state
 void printHelp(void);                                               // Print help message
 void toggleDebug(void);                                             // Toggle  debug flag
 void reinitAll(void);                                               // Reinitialize all settings
 void executeCommand(void);                                          // Execute command read on serial input (a-z and 0-9)
+void displayVariables(void);                                        // Display all variables (debug)
+void setRelay(uint8_t pin, uint8_t state);                          // Change a relay state
 void setup(void);                                                   // Setup
 void loop(void);                                                    // Main loop
 
+// millis() implementation never returning 0
+unsigned long getMillis(void){
+    unsigned long now = millis();
+    if (!now) now++;                                                // Avoid lillis() un setup returning 0 (or at overflow)
+    return now;
+}
+
 // Display current status
 void displayStatus(void) {
-    Serial.print(F(ILSOPEN_COMMAND));
+    Serial.print(F(ILS_OPEN_COMMAND));
     Serial.print(data.activationIls);
     Serial.print(F(" "));
-    Serial.print(F(ILSCLOSE_COMMAND));
+    Serial.print(F(ILS_CLOSE_COMMAND));
     Serial.print(data.deactivationIls);
     Serial.print(F(" "));
-    Serial.print(F(WAGONFILLDURATION_COMMAND));
+    Serial.print(F(RELAY_PULSE_DURATION_COMMAND));
+    Serial.print(data.pulseTime);
+    Serial.print(F(" "));
+    Serial.print(F(WAGON_FILL_DURATION_COMMAND));
     Serial.print(data.fillingTime);
-    if (data.loadDelay) {
-        Serial.print(F(" "));
-        Serial.print(F(LOADDELAY_COMMAND));
-        Serial.print(data.loadDelay);
-    }
-    if (data.unloadDelay) {
-        Serial.print(F(" "));
-        Serial.print(F(UNLOADDELAY_COMMAND));
-        Serial.print(data.unloadDelay);
-    }
+    #ifdef VIBRATION_RELAY
+        if (data.loadDelay) {
+            Serial.print(F(" "));
+            Serial.print(F(LOAD_DELAY_COMMAND));
+            Serial.print(data.loadDelay);
+        }
+        if (data.unloadDelay) {
+            Serial.print(F(" "));
+            Serial.print(F(UNLOAD_DELAY_COMMAND));
+            Serial.print(data.unloadDelay);
+        }
+    #endif
     if (data.inDebug) Serial.print(F(", déverminage"));
     Serial.println(data.isActive ? F(", en marche") : F(", à l'arrêt"));
 }
@@ -319,8 +342,8 @@ void initIO(void) {
         pinMode(ilsPinMapping[i], INPUT_PULLUP);
     }
     // Set relay PIN to output, init level = opened
-    for (uint8_t i = 0; i < 2; i++) {
-        digitalWrite(relayPinMapping[i], RELAY_OPENED);
+    for (uint8_t i = 0; i < 4; i++) {
+        setRelay(i, RELAY_OPENED);
         pinMode(relayPinMapping[i], OUTPUT);
     }
 }
@@ -329,7 +352,7 @@ void initIO(void) {
 void workWithSerial(void) {
     // Reset display ILS flag
     if (displayIls) {
-        Serial.println(F(""));
+        Serial.println();
         displayIls = false;
     }
     // Read serial input
@@ -338,6 +361,7 @@ void workWithSerial(void) {
         char c = Serial.read();
         // Is this a return?
         if (c == 13) {
+            Serial.print(c);
             executeCommand();
             resetInputBuffer();
         } else if (c) {
@@ -391,63 +415,70 @@ bool isCommandValue(char* inputBuffer, char* commandToCheck, uint16_t minValue, 
 
 // Start filling
 void startFilling(void) {
-    unsigned long now = millis();
+    unsigned long now = getMillis();
     if (data.inDebug) {
         Serial.print(F("Début chargement à "));
         Serial.println(now);
     }
-    digitalWrite(relayPinMapping[CLOSE_RELAY], RELAY_OPENED);
-    digitalWrite(relayPinMapping[OPEN_RELAY], RELAY_CLOSED);
+    setRelay(CLOSE_RELAY, RELAY_OPENED);
+    setRelay(OPEN_RELAY, RELAY_CLOSED);
     fillingStartTime = now;
+    fillingEndTime = 0;
     relayPulseTime = now;
+    startVibration();
 }
 
 // Stop filling
-void stopFilling(void) {
-    unsigned long now = millis();
+void stopFilling(unsigned long now) {
     if (data.inDebug) {
         Serial.print(F("Fin chargement à "));
         Serial.print(now);
         Serial.print(F(", durée "));
         Serial.println(now - fillingStartTime);
     }
-    digitalWrite(relayPinMapping[OPEN_RELAY], RELAY_OPENED);
-    digitalWrite(relayPinMapping[CLOSE_RELAY], RELAY_CLOSED);
+    setRelay(OPEN_RELAY, RELAY_OPENED);
+    setRelay(CLOSE_RELAY, RELAY_CLOSED);
     fillingEndTime = now;
+    fillingStartTime = 0;
     relayPulseTime = now;
-    // Keep vibrations after load
-    vibrationLoadTime = millis();
+    #ifdef VIBRATION_RELAY
+        // Keep vibrations after load
+        vibrationLoadTime = now;
+    #endif
 }
 
-
-// Start unloading process
-void startUnloading(void) {
-    if (!vibrationLoadTime) {
-        if (data.inDebug) {
-            Serial.println(F("Début déchargement"));
+#ifdef VIBRATION_RELAY
+    // Start unloading process
+    void startUnloading(unsigned long now) {
+        if (!vibrationUnloadTime) {
+            if (data.inDebug) {
+                Serial.println(F("Début déchargement"));
+            }
+            startVibration();
         }
-        startVibration();
+        vibrationUnloadTime = now;
     }
-    vibrationUnloadTime = millis();
-}
 
-// Start vibration relay
-void startVibration(void) {
-    if (data.inDebug) {
-        Serial.println(F("Début vibrations"));
+    // Start vibration relay
+    void startVibration(void) {
+        if (data.inDebug) {
+            Serial.print(F("Début vibrations à "));
+            Serial.println(getMillis());
+        }
+        setRelay(VIBRATION_RELAY, RELAY_CLOSED);
     }
-    digitalWrite(relayPinMapping[VIBRATION_RELAY], RELAY_CLOSED);
-}
 
-// Stop vibration relay
-void stopVibration(void) {
-    if (data.inDebug) {
-        Serial.println(F("Fin vibrations"));
+    // Stop vibration relay
+    void stopVibration(void) {
+        if (data.inDebug) {
+            Serial.print(F("Fin vibrations à "));
+            Serial.println(getMillis());
+        }
+        setRelay(VIBRATION_RELAY, RELAY_OPENED);
+        vibrationLoadTime = 0;
+        vibrationUnloadTime = 0;
     }
-    digitalWrite(relayPinMapping[VIBRATION_RELAY], RELAY_OPENED);
-    vibrationLoadTime = 0;
-    vibrationUnloadTime = 0;
-}
+#endif
 
 // Display all ILS state
 void displayIlsState(void) {
@@ -456,18 +487,21 @@ void displayIlsState(void) {
 
 // Print help message
 void printHelp(void) {
-    Serial.print(F(ILSOPEN_COMMAND)); Serial.println(F("1-10 : ILS ouverture (numéro)"));
-    Serial.print(F(ILSCLOSE_COMMAND)); Serial.println(F("1-10 : ILS fermeture( numéro)"));
-    Serial.print(F(RELAYPULSEDURATION_COMMAND)); Serial.println(F("1-999 : Durée impulsion relai (ms)"));
-    Serial.print(F(WAGONFILLDURATION_COMMAND)); Serial.println(F("1-9999 : Durée remplissage wagon (ms)"));
-    Serial.print(F(LOADDELAY_COMMAND)); Serial.println(F("0-9999 : Retard remplissage vibrations (ms)"));
-    Serial.print(F(UNLOADDELAY_COMMAND)); Serial.println(F("0-9999 : Retard vidage vibrations (ms)"));
+    Serial.print(F(ILS_OPEN_COMMAND)); Serial.println(F("1-10 : ILS ouverture (numéro)"));
+    Serial.print(F(ILS_CLOSE_COMMAND)); Serial.println(F("1-10 : ILS fermeture( numéro)"));
+    Serial.print(F(RELAY_PULSE_DURATION_COMMAND)); Serial.println(F("1-999 : Durée impulsion relai (ms)"));
+    Serial.print(F(WAGON_FILL_DURATION_COMMAND)); Serial.println(F("1-9999 : Durée remplissage wagon (ms)"));
+    #ifdef VIBRATION_RELAY
+        Serial.print(F(LOAD_DELAY_COMMAND)); Serial.println(F("0-9999 : Retard remplissage vibrations (ms)"));
+        Serial.print(F(UNLOAD_DELAY_COMMAND)); Serial.println(F("0-9999 : Retard vidage vibrations (ms)"));
+    #endif
     Serial.print(F(START_COMMAND)); Serial.println(F(" : Marche"));
     Serial.print(F(STOP_COMMAND)); Serial.println(F(" : Arrêt"));
-    Serial.print(F(ILSSTATE_COMMAND)); Serial.println(F(" : Etat ILS"));
-    Serial.print(F(OPENRELAY_COMMAND)); Serial.println(F(" : Ouverture trémie"));
-    Serial.print(F(CLOSERELAY_COMMAND)); Serial.println(F(" : Fermeture trémie"));
-    Serial.print(F(DEBUGTOGGLE_COMMAND)); Serial.println(F(" : Bascule déverminage"));
+    Serial.print(F(ILS_STATE_COMMAND)); Serial.println(F(" : Etat ILS"));
+    Serial.print(F(OPEN_RELAY_COMMAND)); Serial.println(F(" : Ouverture trémie"));
+    Serial.print(F(CLOSE_RELAY_COMMAND)); Serial.println(F(" : Fermeture trémie"));
+    Serial.print(F(DEBUG_TOGGLE_COMMAND)); Serial.println(F(" : Bascule déverminage"));
+    Serial.print(F(DISPLAY_VARIABLES_COMMAND)); Serial.println(F(" : Affiche variables"));
     Serial.print(F(INIT_COMMAND)); Serial.println(F(" : Initialisation globale"));
 }
 
@@ -479,7 +513,7 @@ void toggleDebug(void){
 
 // Reinitialize all settings
 void reinitAll(void) {
-    stopFilling();
+    stopFilling(getMillis());
     initSettings();
     saveSettings();
 }
@@ -493,43 +527,90 @@ void executeCommand(void) {
     Serial.println(inputBuffer);
     if (isCommand(inputBuffer, (char*) INIT_COMMAND)) {
         reinitAll();
-    } else if (isCommand(inputBuffer, (char*) OPENRELAY_COMMAND)) {
+    } else if (isCommand(inputBuffer, (char*) OPEN_RELAY_COMMAND)) {
         startFilling();
-    } else if (isCommand(inputBuffer, (char*) CLOSERELAY_COMMAND)) {
-        stopFilling();
-    } else if (isCommand(inputBuffer, (char*) ILSSTATE_COMMAND)) {
+    } else if (isCommand(inputBuffer, (char*) CLOSE_RELAY_COMMAND)) {
+        stopFilling(getMillis());
+    } else if (isCommand(inputBuffer, (char*) ILS_STATE_COMMAND)) {
         displayIlsState();
     } else if (isCommand(inputBuffer, (char*) START_COMMAND)) {
         data.isActive = true;
     } else if (isCommand(inputBuffer, (char*) STOP_COMMAND)) {
         data.isActive = false;
         if (fillingStartTime) {
-            stopFilling();
+            stopFilling(getMillis());
         }
-    } else if (isCommand(inputBuffer, (char*) DEBUGTOGGLE_COMMAND)) {
+    } else if (isCommand(inputBuffer, (char*) DEBUG_TOGGLE_COMMAND)) {
         toggleDebug();
-    } else if (isCommandValue(inputBuffer, (char*) ILSOPEN_COMMAND, 1, 10)) { 
+    } else if (isCommand(inputBuffer, (char*) DISPLAY_VARIABLES_COMMAND)) {
+        displayVariables();
+    } else if (isCommandValue(inputBuffer, (char*) ILS_OPEN_COMMAND, 1, 10)) { 
         data.activationIls = commandValue;
         saveSettings();
-    } else if (isCommandValue(inputBuffer, (char*) ILSCLOSE_COMMAND, 1, 10)) { 
+    } else if (isCommandValue(inputBuffer, (char*) ILS_CLOSE_COMMAND, 1, 10)) { 
         data.deactivationIls = commandValue;
         saveSettings();
-    } else if (isCommandValue(inputBuffer, (char*) WAGONFILLDURATION_COMMAND, 1, 9999)) {
+    } else if (isCommandValue(inputBuffer, (char*) WAGON_FILL_DURATION_COMMAND, 1, 9999)) {
         data.fillingTime = commandValue;
         saveSettings();
-    } else if (isCommandValue(inputBuffer, (char*) RELAYPULSEDURATION_COMMAND, 1, 999)) {
+    } else if (isCommandValue(inputBuffer, (char*) RELAY_PULSE_DURATION_COMMAND, 1, 999)) {
         data.pulseTime = commandValue;
         saveSettings();
-    } else if (isCommandValue(inputBuffer, (char*) LOADDELAY_COMMAND, 1, 9999)) {
+    } else if (isCommandValue(inputBuffer, (char*) LOAD_DELAY_COMMAND, 1, 9999)) {
         data.loadDelay = commandValue;
         saveSettings();
-    } else if (isCommandValue(inputBuffer, (char*) UNLOADDELAY_COMMAND, 1, 9999)) {
+    } else if (isCommandValue(inputBuffer, (char*) UNLOAD_DELAY_COMMAND, 1, 9999)) {
         data.unloadDelay = commandValue;
         saveSettings();
     } else {
-        printHelp();
+        if (inputBuffer[0]) {
+            printHelp();
+        }
     }
     displayStatus();
+}
+
+// Display all variables (debug)
+void displayVariables(void) {
+    Serial.print(F("millis()=")); Serial.println(millis());
+    Serial.print(F("fillingStartTime=")); Serial.println(fillingStartTime);
+    Serial.print(F("fillingEndTime=")); Serial.println(fillingEndTime);
+    Serial.print(F("relayPulseTime=")); Serial.println(relayPulseTime);
+    Serial.print(F("lastIlsDisplay=")); Serial.println(lastIlsDisplay);
+    #ifdef VIBRATION_RELAY
+        Serial.print(F("vibrationLoadTime=")); Serial.println(vibrationLoadTime);
+        Serial.print(F("vibrationUnloadTime=")); Serial.println(vibrationUnloadTime);
+    #endif
+    Serial.print(F("doorOpened=")); Serial.println(doorOpened);
+    Serial.println(F("ILS: 1234567890D"));
+    Serial.print(F(  "     "));
+    for (uint8_t i = 0; i<11; i++) {
+        if (digitalRead(ilsPinMapping[i]) == ILS_CLOSED) {
+            Serial.print(F("X"));
+        } else {
+            Serial.print(F("-"));
+        }
+    }
+    Serial.println();
+    Serial.println(F("Relai : OFV"));
+    Serial.print(F(  "        "));
+    for (uint8_t i = 0; i<3; i++) {
+        if (relayState[i] == RELAY_CLOSED) {
+            Serial.print(F("X"));
+        } else {
+            Serial.print(F("-"));
+        }
+    }
+    Serial.println();
+}
+
+// Change a relay state
+void setRelay(uint8_t index, uint8_t state){
+    digitalWrite(relayPinMapping[index], state);
+    relayState[index] = state;
+    // Set door opened depnding on states
+    if (index == OPEN_RELAY && state) doorOpened = true;
+    if (index == CLOSE_RELAY && state) doorOpened = false;
 }
 
 // Setup
@@ -543,13 +624,13 @@ void setup(void){
     resetInputBuffer();
     initSettings();
     loadSettings();
-    stopFilling();
+    stopFilling(getMillis());
     displayStatus();
 }
 
 // Main loop
 void loop(void){
-    unsigned long now = millis();
+    unsigned long now = getMillis();
 
     // Do we need to close any relay after pulse?
     if (relayPulseTime && ((now - relayPulseTime) >= data.pulseTime)) {
@@ -560,17 +641,19 @@ void loop(void){
             Serial.println(now - relayPulseTime);
         }
         for (uint8_t i = 0; i < 2; i++) {
-            digitalWrite(relayPinMapping[i], RELAY_OPENED);
+            setRelay(i, RELAY_OPENED);
         }
         relayPulseTime = 0;        
     }
 
     // Do we need to stop filling after a too long time opened?
     if (!fillingEndTime && fillingStartTime && ((now - fillingStartTime) >= data.fillingTime)) {
-        Serial.print(F("Fermeture forcée après "));
+        Serial.print(F("Fermeture forcée à "));
+        Serial.print(now);
+        Serial.print(F(" après "));
         Serial.print(data.fillingTime);
         Serial.println(F(" ms"));
-        stopFilling();
+        stopFilling(now);
     };
 
     // Do job if we're active
@@ -578,18 +661,18 @@ void loop(void){
         // Check for activation ILS
         if (!fillingStartTime && (digitalRead(ilsPinMapping[data.activationIls]) == ILS_CLOSED)) {
             if (data.inDebug) {
-                Serial.println(F("Début ILS à "));
+                Serial.print(F("Début ILS à "));
                 Serial.println(now);
             }
             startFilling();
         }
         // Check for deactivation ILS
         if ((fillingStartTime) && !fillingEndTime && (digitalRead(ilsPinMapping[data.deactivationIls]) == ILS_CLOSED)) {
-            stopFilling();
+            stopFilling(now);
             // Compute between ILS duration (max 65 seconds)
             uint16_t ilsDuration = fillingEndTime - fillingStartTime;
             if (data.inDebug) {
-                Serial.println(F("Fin ILS à "));
+                Serial.print(F("Fin ILS à "));
                 Serial.print(now);
                 Serial.print(F(", durée "));
                 Serial.println(ilsDuration);
@@ -610,15 +693,22 @@ void loop(void){
             fillingStartTime = 0;
             fillingEndTime = 0;
         }
-        // Check for unload ILS
-        if (digitalRead(ilsPinMapping[10]) == ILS_CLOSED) {
-            startUnloading();
-        }
+        #ifdef VIBRATION_RELAY
+            // Check for unload ILS
+            if (digitalRead(ilsPinMapping[10]) == ILS_CLOSED) {
+                startUnloading(now);
+            }
+        #endif
     }
 
-    if (((now - vibrationLoadTime) >= data.loadDelay) && ((now - vibrationUnloadTime) >= data.unloadDelay)) {
-        stopVibration();
-    }
+    #ifdef VIBRATION_RELAY
+        if (((!vibrationLoadTime) || ((now - vibrationLoadTime) >= data.loadDelay))
+                && ((!vibrationUnloadTime) || ((now - vibrationUnloadTime) >= data.unloadDelay))) {
+            if (vibrationLoadTime || vibrationUnloadTime) {
+                stopVibration();
+            }
+        }
+    #endif
     // Scan serial for input
     if (Serial.available()) {
         workWithSerial();
@@ -626,24 +716,27 @@ void loop(void){
 
     // Display ILS state if needed
     if (displayIls) {
-        if ((millis() - lastIlsDisplay) > DISPLAY_ILS_TIME) {
+        if ((getMillis() - lastIlsDisplay) > DISPLAY_ILS_TIME) {
             Serial.print (F("\rILS : "));
             for (uint8_t i = 0; i < 10; i++) {
                 if (digitalRead(ilsPinMapping[i]) == ILS_CLOSED) {
                     Serial.print(i+1);
                 } else {
                     Serial.print(F("-"));
+                    if (i == 9) Serial.print(F(" "));
                 }
                 Serial.print(F(" "));
             }
-            // Display unload vibrations ILS
-            if (digitalRead(ilsPinMapping[10]) == ILS_CLOSED) {
-                Serial.print("D");
-            } else {
-                Serial.print(F("-"));
-            }
+            #ifdef VIBRATION_RELAY  
+                // Display unload vibrations ILS
+                if (digitalRead(ilsPinMapping[10]) == ILS_CLOSED) {
+                    Serial.print(F("D"));
+                } else {
+                    Serial.print(F("-"));
+                }
+            #endif
             Serial.print(F(" "));
-            lastIlsDisplay = millis();
+            lastIlsDisplay = getMillis();
         }
     }
 }
