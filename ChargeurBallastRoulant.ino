@@ -1,8 +1,8 @@
-#define CODE_VERSION "V26.2.12-1"
+#define CODE_VERSION "V26.2.19-1"
 
 /*
 
-Contrôle d'un chargeur de ballast pour train miniature
+Contrôle d'un chargeur de ballast pour train miniature (version chargement en roulant)
 
 	Ce code contrôle un chargeur de ballast dans des wagons adéquats.
 
@@ -23,12 +23,13 @@ Contrôle d'un chargeur de ballast pour train miniature
 
 	Il arrive que le granulat bloque la sortie de la trémie. Pour contrer ce problème, on peut ajouter
         un vibreur qui sera alimenté lorsque la trémie s'ouvre jusqu'à expiration d'un temps donné
-        après la fermeture de la trémie. De plus, il est possible d'ajouter un ILS supplémentaire sur la
-        zone de déchargement, qui activera également le vibreur pendant un temps donné, afin de faciliter
-        la descente du ballast dans la trémie. Sur certains modèles de trémie, il arrive que ces vibrations
-        (ré)ouvrent la trémie. Pour contrer cette tendance, il est possible de définir un délai de
-        refermeture de la trémie, qui renverra une impulsion de fermeture à intervalle régulier tant que
-        les vibrations seront actives.
+        après la fermeture de la trémie.
+        De plus, il est possible d'ajouter un ILS supplémentaire sur la zone de déchargement, qui
+        activera également le vibreur pendant un temps donné, afin de faciliter la descente du ballast
+        dans la trémie.
+        Sur certains modèles de trémie, il arrive que ces vibrations (ré)ouvrent la trémie. Pour contrer
+        cette tendance, il est possible de définir un délai de refermeture de la trémie, qui renverra une
+        impulsion de fermeture à intervalle régulier tant que les vibrations seront actives.
     
     Les réglages sont envoyés à l'Arduino au travers de sa liaison série. Ce même moyen est utilisé pour
 		envoyer les messages à l'utilisateur.
@@ -45,7 +46,7 @@ Hardware Arduino Nano:
 		- définition durée remplissage en 1/1000eme de seconde
         - définition du délai d'arrêt des vibrations au remplissage
         - définition du délai d'arrêt des vibrations au vidage
-        - définition du délai de refermeture (ou contrer la réouverture par les vibrations)
+        - définition du délai de refermeture (pour contrer la réouverture par les vibrations)
 		- affichage état des ILS
 		- affichage aide
 		- commande d'ouverture de trémie
