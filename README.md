@@ -1,4 +1,4 @@
-# Contrôle d'un chargeur de ballast pour train miniature
+# Contrôle d'un chargeur de ballast pour train miniature (version roulante)
 
 Ce code contrôle un chargeur de ballast dans des wagons adéquats.
 
